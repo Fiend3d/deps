@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 
 	"github.com/charmbracelet/x/ansi"
+	"golang.design/x/clipboard"
 )
 
 func truncate(s string, width int) string {
@@ -28,4 +29,14 @@ func findDependency(dep, dllPath string) (string, bool) {
 	}
 
 	return "", false
+}
+
+func clipboardWrite(text string) error {
+	err := clipboard.Init()
+	if err != nil {
+		return err
+	}
+
+	clipboard.Write(clipboard.FmtText, []byte(text))
+	return nil
 }
