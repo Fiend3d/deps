@@ -1,12 +1,26 @@
 package main
 
 import (
+	"log"
 	"os"
 	"path/filepath"
 
 	"github.com/charmbracelet/x/ansi"
+	"github.com/saferwall/pe"
 	"golang.design/x/clipboard"
 )
+
+func parseFile(filePath string) *pe.File {
+	f, err := pe.New(filePath, &pe.Options{})
+	if err != nil {
+		log.Fatalf("failed to open PE file: %v", err)
+	}
+	err = f.Parse()
+	if err != nil {
+		log.Fatalf("failed to parse PE: %v", err)
+	}
+	return f
+}
 
 func truncate(s string, width int) string {
 	return ansi.Truncate(s, width, "…")

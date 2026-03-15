@@ -29,9 +29,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
+		case "l", "right", "enter":
+			switch m.mode {
+			case importMode:
+				return m.right()
+			}
+
+		case "h", "left":
+			if len(m.history) > 1 {
+				return m.left()
+			}
+
 		case "space":
 			switch m.mode {
 			case importMode:
+				if m.length() == 0 {
+					return m, nil
+				}
 				mappedCursor, function := m.mapIndex(m.cursor)
 				if function != -1 {
 					m.cursor = m.mapFrom(mappedCursor, -1)
@@ -45,6 +59,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case "c":
+			if m.length() == 0 {
+				return m, nil
+			}
 			switch m.mode {
 			case importMode:
 				mappedCursor, _ := m.mapIndex(m.cursor)
@@ -59,6 +76,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case "a":
+			if m.length() == 0 {
+				return m, nil
+			}
 			switch m.mode {
 			case importMode:
 				names := make([]string, len(m.imports))
@@ -76,6 +96,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case "f":
+			if m.length() == 0 {
+				return m, nil
+			}
 			switch m.mode {
 			case importMode:
 				mappedCursor, _ := m.mapIndex(m.cursor)

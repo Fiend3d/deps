@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/saferwall/pe"
 )
 
 var (
@@ -40,17 +39,7 @@ func main() {
 		log.Fatalf("failed to convert (%s) to absulte path: %v", args[0], err)
 	}
 
-	f, err := pe.New(filePath, &pe.Options{})
-	if err != nil {
-		log.Fatalf("failed to open PE file: %v", err)
-	}
-
-	err = f.Parse()
-	if err != nil {
-		log.Fatalf("failed to parse PE: %v", err)
-	}
-
-	p := tea.NewProgram(initModel(filePath, f))
+	p := tea.NewProgram(initModel(filePath, []string{}))
 
 	_, err = p.Run()
 	if err != nil {

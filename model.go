@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/saferwall/pe"
 )
 
 type mode int
@@ -59,6 +58,8 @@ type model struct {
 
 	width  int
 	height int
+
+	history []string
 }
 
 func (m *model) length() int {
@@ -131,10 +132,16 @@ func (m *model) mapIndex(index int) (int, int) {
 	return -1, -1
 }
 
-func initModel(filePath string, f *pe.File) model {
-	result := model{filePath: filePath}
+func initModel(filePath string, history []string) model {
+	f := parseFile(filePath)
 
-	if f.Imports != nil {
+	result := model{
+		filePath: filePath,
+		history:  append(history, filePath),
+		mode:     importMode,
+	}
+
+	if f.HasImport {
 		for _, imp := range f.Imports {
 			path, found := findDependency(imp.Name, filePath)
 			item := &importItem{
@@ -152,6 +159,8 @@ func initModel(filePath string, f *pe.File) model {
 			}
 			result.imports = append(result.imports, item)
 		}
+	}
+	if f.HasExport {
 		for _, fn := range f.Export.Functions {
 			var item exportItem
 			if fn.Name != "" {
@@ -187,4 +196,28 @@ func (m *model) moveCursor(move int) (tea.Model, tea.Cmd) {
 	m.cursor = max(0, min(m.cursor, m.length()-1))
 	m.updateStart()
 	return m, nil
+}
+
+func (m *model) right() (tea.Model, tea.Cmd) {
+	if m.length() == 0 {
+		return m, nil
+	}
+	mappedCursor, _ := m.mapIndex(m.cursor)
+	item := m.imports[mappedCursor]
+	if item.found {
+		newModel := initModel(item.path, m.history)
+		newModel.width = m.width
+		newModel.height = m.height
+		return newModel, nil
+	}
+
+	return m, nil
+}
+
+func (m *model) left() (tea.Model, tea.Cmd) {
+	last := len(m.history) - 2
+	newModel := initModel(m.history[last], m.history[:last])
+	newModel.width = m.width
+	newModel.height = m.height
+	return newModel, nil
 }

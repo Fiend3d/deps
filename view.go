@@ -13,6 +13,13 @@ func (m model) View() tea.View {
 	result.AltScreen = true
 	result.MouseMode = tea.MouseModeCellMotion
 
+	switch m.mode {
+	case importMode:
+		result.WindowTitle = "Deps - Import"
+	case exportMode:
+		result.WindowTitle = "Deps - Export"
+	}
+
 	var s strings.Builder
 
 	style := lipgloss.NewStyle()
@@ -45,7 +52,7 @@ func (m model) View() tea.View {
 	case importMode:
 		if length == 0 {
 			s.WriteString(truncate(
-				style.Foreground(lipgloss.Red).Render("No imports"),
+				style.Foreground(lipgloss.Green).Render("No imports"),
 				m.width,
 			))
 			s.WriteRune('\n')
@@ -109,7 +116,7 @@ func (m model) View() tea.View {
 	case exportMode:
 		if length == 0 {
 			s.WriteString(truncate(
-				style.Foreground(lipgloss.Red).Render("No exports"),
+				style.Foreground(lipgloss.Green).Render("No exports"),
 				m.width,
 			))
 			s.WriteRune('\n')
