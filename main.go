@@ -36,7 +36,7 @@ func main() {
 
 	filePath, err := filepath.Abs(args[0])
 	if err != nil {
-		log.Fatalf("failed to convert (%s) to absulte path: %v", args[0], err)
+		log.Fatalf("failed to convert (%s) to absolute path: %v", args[0], err)
 	}
 
 	p := tea.NewProgram(initModel(filePath, []string{}))

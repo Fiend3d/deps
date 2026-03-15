@@ -20,7 +20,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.click = newClick(data.X, data.Y, &m.click)
 			switch m.mode {
 			case importMode:
-				if m.click.y > 0 && m.click.y < (m.height-1) {
+				if m.click.y > 0 && m.click.y < m.height-1 {
 					if m.click.y-1 < m.length()-m.start {
 						m.cursor = m.click.y - 1 + m.start
 						if m.click.doubleClick {
@@ -33,7 +33,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 			case exportMode:
-				if m.click.y > 0 && m.click.y < (m.height-1) {
+				if m.click.y > 0 && m.click.y < m.height-1 {
 					if m.click.y-1 < m.length()-m.start {
 						m.cursor = m.click.y - 1 + m.start
 					}
