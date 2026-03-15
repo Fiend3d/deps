@@ -48,6 +48,8 @@ func (i *exportItem) String() string {
 type model struct {
 	mode mode
 
+	click mouseClick
+
 	filePath string
 
 	imports []*importItem
@@ -220,4 +222,18 @@ func (m *model) left() (tea.Model, tea.Cmd) {
 	newModel.width = m.width
 	newModel.height = m.height
 	return newModel, nil
+}
+
+func (m *model) handleWheel(steps int) (tea.Model, tea.Cmd) {
+	switch m.mode {
+	case importMode, exportMode:
+		if m.height-2 <= m.length() {
+			m.start += steps
+			actualHeight := m.height - 2
+			m.start = max(0,
+				min(m.start, m.length()-actualHeight))
+		}
+		return m, nil
+	}
+	return m, nil
 }

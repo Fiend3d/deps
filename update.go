@@ -13,6 +13,43 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		return m, nil
 
+	case tea.MouseClickMsg:
+		data := msg.Mouse()
+		switch data.Button {
+		case tea.MouseLeft:
+			m.click = newClick(data.X, data.Y, &m.click)
+			switch m.mode {
+			case importMode:
+				if m.click.y > 0 && m.click.y < (m.height-1) {
+					if m.click.y-1 < m.length()-m.start {
+						m.cursor = m.click.y - 1 + m.start
+						if m.click.doubleClick {
+							mappedIndex, _ := m.mapIndex(m.cursor)
+							item := m.imports[mappedIndex]
+							if item.found {
+								return m.right()
+							}
+						}
+					}
+				}
+			case exportMode:
+				if m.click.y > 0 && m.click.y < (m.height-1) {
+					if m.click.y-1 < m.length()-m.start {
+						m.cursor = m.click.y - 1 + m.start
+					}
+				}
+			}
+		}
+
+	case tea.MouseWheelMsg:
+		data := msg.Mouse()
+		switch data.Button {
+		case tea.MouseWheelUp:
+			return m.handleWheel(-3)
+		case tea.MouseWheelDown:
+			return m.handleWheel(3)
+		}
+
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "q":
