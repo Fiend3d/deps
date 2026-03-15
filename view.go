@@ -16,26 +16,20 @@ func (m model) View() tea.View {
 	var s strings.Builder
 
 	style := lipgloss.NewStyle()
-	red := style.Foreground(lipgloss.Red)
-	green := style.Foreground(lipgloss.Green)
-	yellow := style.Foreground(lipgloss.Yellow)
-	gray := style.Foreground(lipgloss.BrightBlack)
-	sky := style.Foreground(lipgloss.BrightBlue)
-	blue := style.Foreground(lipgloss.Blue)
 
 	header := m.filePath
 	length := m.length()
 
 	switch m.mode {
 	case importMode:
-		header += yellow.Render(" IMPORT ")
+		header += style.Foreground(lipgloss.Yellow).Render(" IMPORT ")
 		if length == 0 {
 			header += "[empty]"
 		} else {
 			header += fmt.Sprintf("[%d/%d]", m.cursor+1, length)
 		}
 	case exportMode:
-		header += sky.Render(" EXPORT ")
+		header += style.Foreground(lipgloss.BrightBlue).Render(" EXPORT ")
 		if len(m.exports) == 0 {
 			header += "[empty]"
 		} else {
@@ -51,7 +45,7 @@ func (m model) View() tea.View {
 	case importMode:
 		if length == 0 {
 			s.WriteString(truncate(
-				red.Render("No imports"),
+				style.Foreground(lipgloss.Red).Render("No imports"),
 				m.width,
 			))
 			s.WriteRune('\n')
@@ -78,7 +72,11 @@ func (m model) View() tea.View {
 					dllName := item.dllName
 
 					if item.found {
-						line += green.Render(dllName)
+						if current {
+							line += style.Foreground(lipgloss.BrightGreen).Render(dllName)
+						} else {
+							line += style.Foreground(lipgloss.Green).Render(dllName)
+						}
 						rightSize := m.width - lipgloss.Width(line) - 1
 						rightStr := truncate(item.path, rightSize)
 						rightStyle := style.Width(rightSize).Align(lipgloss.Right)
@@ -88,14 +86,18 @@ func (m model) View() tea.View {
 							line += " " + rightStyle.Foreground(lipgloss.BrightBlack).Render(rightStr)
 						}
 					} else {
-						line += red.Render(dllName)
+						if current {
+							line += style.Foreground(lipgloss.BrightRed).Render(dllName)
+						} else {
+							line += style.Foreground(lipgloss.Red).Render(dllName)
+						}
 					}
 				} else {
 					functionStr := item.functions[function]
 					if function != len(item.functions)-1 {
-						line += gray.Render("├─") + functionStr
+						line += style.Foreground(lipgloss.BrightBlack).Render("├─") + functionStr
 					} else {
-						line += gray.Render("└─") + functionStr
+						line += style.Foreground(lipgloss.BrightBlack).Render("└─") + functionStr
 					}
 				}
 
@@ -105,40 +107,56 @@ func (m model) View() tea.View {
 			}
 		}
 	case exportMode:
-		for i := range length {
-			if i+1 > m.height-2 || i+m.start >= length {
-				break
-			}
-
-			index := i + m.start
-			current := index == m.cursor
-			cursor := "   "
-
-			if current {
-				cursor = " > "
-			}
-
-			line := cursor
-
-			item := m.exports[index]
-			if item.hasName {
-				line += yellow.Render(item.name)
-				leftLength := lipgloss.Width(line)
-				rightStyle := style.Align(lipgloss.Right).Width(m.width - leftLength)
-				if !current {
-					rightStyle = rightStyle.Foreground(lipgloss.BrightBlack)
-				}
-				rightStr := fmt.Sprintf(" (ordinal %d, RVA 0x%08X)", item.ordinal, item.rva)
-				if len(rightStr) <= m.width-leftLength {
-					line += rightStyle.Render(rightStr)
-				}
-			} else {
-				line += fmt.Sprintf("(ordinal %d only, RVA 0x%08X)", item.ordinal, item.rva)
-			}
-
-			s.WriteString(truncate(line, m.width))
+		if length == 0 {
+			s.WriteString(truncate(
+				style.Foreground(lipgloss.Red).Render("No exports"),
+				m.width,
+			))
 			s.WriteRune('\n')
 			lineCount++
+		} else {
+			for i := range length {
+				if i+1 > m.height-2 || i+m.start >= length {
+					break
+				}
+
+				index := i + m.start
+				current := index == m.cursor
+				cursor := "   "
+
+				if current {
+					cursor = " > "
+				}
+
+				line := cursor
+
+				item := m.exports[index]
+				if item.hasName {
+					if current {
+						line += style.Foreground(lipgloss.BrightYellow).Render(item.name)
+					} else {
+						line += style.Foreground(lipgloss.Yellow).Render(item.name)
+					}
+					rightSize := m.width - lipgloss.Width(line)
+					rightStr := fmt.Sprintf(" (ordinal %d, RVA 0x%08X)", item.ordinal, item.rva)
+					rightStr = truncate(rightStr, rightSize)
+					rightStyle := style.Width(rightSize).Align(lipgloss.Right)
+					if !current {
+						rightStyle = rightStyle.Foreground(lipgloss.BrightBlack)
+					}
+					line += rightStyle.Render(rightStr)
+				} else {
+					if current {
+						line += fmt.Sprintf("(ordinal %d only, RVA 0x%08X)", item.ordinal, item.rva)
+					} else {
+						line += style.Foreground(lipgloss.BrightBlack).Render(fmt.Sprintf("(ordinal %d only, RVA 0x%08X)", item.ordinal, item.rva))
+					}
+				}
+
+				s.WriteString(truncate(line, m.width))
+				s.WriteRune('\n')
+				lineCount++
+			}
 		}
 	}
 
@@ -146,36 +164,55 @@ func (m model) View() tea.View {
 		s.WriteRune('\n')
 	}
 
-	help := blue.Render("Keys: ")
+	help := style.Foreground(lipgloss.BrightBlue).Render("Keys: ")
 
 	mappedCursor, function := m.mapIndex(m.cursor)
 
 	switch m.mode {
 	case importMode:
 		help += "Tab"
-		help += blue.Render(" - EXPORT ")
-		help += "Space"
-		if function == -1 {
+		help += style.Foreground(lipgloss.BrightBlue).Render(" - EXPORT ")
+
+		if length > 0 {
 			item := m.imports[mappedCursor]
 			if item.found {
-				if !item.showFunctions {
-					help += blue.Render(" - Show functions ")
+				help += "Space"
+				if function == -1 {
+					if !item.showFunctions {
+						help += style.Foreground(lipgloss.BrightBlue).Render(" - Show functions ")
+					} else {
+						help += style.Foreground(lipgloss.BrightBlue).Render(" - Hide functions ")
+					}
 				} else {
-					help += blue.Render(" - Hide functions ")
+					help += style.Foreground(lipgloss.BrightBlue).Render(" - Hide functions ")
 				}
 			}
-		} else {
-			help += blue.Render(" - Hide functions ")
 		}
+
 	case exportMode:
 		help += "Tab"
-		help += blue.Render(" - IMPORT ")
+		help += style.Foreground(lipgloss.BrightBlue).Render(" - IMPORT ")
 	}
 
-	help += "a"
-	help += blue.Render(" - Copy all ")
-	help += "c"
-	help += blue.Render(" - Copy selected")
+	if length > 0 {
+		help += "a"
+		help += style.Foreground(lipgloss.BrightBlue).Render(" - Copy all ")
+
+		switch m.mode {
+		case importMode:
+			item := m.imports[mappedCursor]
+			if item.found {
+				help += "c"
+				help += style.Foreground(lipgloss.BrightBlue).Render(" - Copy selected path ")
+				help += "f"
+				help += style.Foreground(lipgloss.BrightBlue).Render(" - Copy functions ")
+			}
+
+		case exportMode:
+			help += "c"
+			help += style.Foreground(lipgloss.BrightBlue).Render(" - Copy selected ")
+		}
+	}
 
 	s.WriteString(truncate(help, m.width))
 

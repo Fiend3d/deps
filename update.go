@@ -49,7 +49,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case importMode:
 				mappedCursor, _ := m.mapIndex(m.cursor)
 				item := m.imports[mappedCursor]
-				clipboardWrite(item.path)
+				if item.found {
+					clipboardWrite(item.path)
+				}
 			case exportMode:
 				mappedCursor, _ := m.mapIndex(m.cursor)
 				item := m.exports[mappedCursor]
@@ -71,6 +73,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					names[i] = m.exports[i].String()
 				}
 				clipboardWrite(strings.Join(names, "\n"))
+			}
+
+		case "f":
+			switch m.mode {
+			case importMode:
+				mappedCursor, _ := m.mapIndex(m.cursor)
+				item := m.imports[mappedCursor]
+				if item.found {
+					clipboardWrite(strings.Join(item.functions, "\n"))
+				}
 			}
 
 		case "j", "down":
