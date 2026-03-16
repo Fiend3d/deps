@@ -18,6 +18,8 @@ var (
 
 func main() {
 	version := flag.Bool("v", false, "print version")
+	imports := flag.Bool("i", false, "print imports")
+	exports := flag.Bool("e", false, "print exports")
 
 	flag.Parse()
 
@@ -31,7 +33,14 @@ func main() {
 	if len(args) != 1 {
 		fmt.Fprintf(os.Stderr, "Usage: deps [flags] <filepath>\n")
 		fmt.Fprintf(os.Stderr, "  -v    print version\n")
+		fmt.Fprintf(os.Stderr, "  -i    print imports\n")
+		fmt.Fprintf(os.Stderr, "  -e    print exports\n")
 		os.Exit(1)
+	}
+
+	if *imports || *exports {
+		printPE(args[0], *imports, *exports)
+		return
 	}
 
 	filePath, err := filepath.Abs(args[0])
