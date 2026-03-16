@@ -105,6 +105,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				item := m.imports[mappedCursor]
 				if item.found {
 					clipboardWrite(item.path)
+				} else {
+					clipboardWrite(item.dllName)
 				}
 			case exportMode:
 				mappedCursor, _ := m.mapIndex(m.cursor)

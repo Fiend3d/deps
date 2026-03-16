@@ -213,6 +213,9 @@ func (m model) View() tea.View {
 				help += style.Foreground(lg.BrightBlue).Render(" - Copy selected path ")
 				help += "f"
 				help += style.Foreground(lg.BrightBlue).Render(" - Copy functions ")
+			} else {
+				help += "c"
+				help += style.Foreground(lg.BrightBlue).Render(" - Copy selected ")
 			}
 
 		case exportMode:
