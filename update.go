@@ -103,15 +103,27 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case importMode:
 				mappedCursor, _ := m.mapIndex(m.cursor)
 				item := m.imports[mappedCursor]
-				if item.found {
-					clipboardWrite(item.path)
-				} else {
-					clipboardWrite(item.dllName)
-				}
+				clipboardWrite(item.dllName)
+				return m, nil
 			case exportMode:
 				mappedCursor, _ := m.mapIndex(m.cursor)
 				item := m.exports[mappedCursor]
 				clipboardWrite(item.String())
+				return m, nil
+			}
+
+		case "p":
+			if m.length() == 0 {
+				return m, nil
+			}
+			switch m.mode {
+			case importMode:
+				mappedCursor, _ := m.mapIndex(m.cursor)
+				item := m.imports[mappedCursor]
+				if item.found {
+					clipboardWrite(item.path)
+					return m, nil
+				}
 			}
 
 		case "a":

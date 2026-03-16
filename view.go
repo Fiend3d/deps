@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -85,7 +86,8 @@ func (m model) View() tea.View {
 							line += style.Foreground(lg.Green).Render(dllName)
 						}
 						rightSize := m.width - lg.Width(line) - 1
-						rightStr := truncate(item.path, rightSize)
+						rightDir := filepath.Dir(item.path)
+						rightStr := truncate(rightDir, rightSize)
 						rightStyle := style.Width(rightSize).Align(lg.Right)
 						if current {
 							line += " " + rightStyle.Render(rightStr)
@@ -202,21 +204,25 @@ func (m model) View() tea.View {
 	}
 
 	if length > 0 {
+		help += "["
+		help += style.Foreground(lg.BrightBlue).Render("Copy: ")
+
 		help += "a"
-		help += style.Foreground(lg.BrightBlue).Render(" - Copy all ")
+		help += style.Foreground(lg.BrightBlue).Render(" - All ")
 
 		switch m.mode {
 		case importMode:
 			item := m.imports[mappedCursor]
+			help += "c"
+			help += style.Foreground(lg.BrightBlue).Render(" - Selected")
+
 			if item.found {
-				help += "c"
-				help += style.Foreground(lg.BrightBlue).Render(" - Copy selected path ")
+				help += " p"
+				help += style.Foreground(lg.BrightBlue).Render(" - Path ")
 				help += "f"
-				help += style.Foreground(lg.BrightBlue).Render(" - Copy functions ")
-			} else {
-				help += "c"
-				help += style.Foreground(lg.BrightBlue).Render(" - Copy selected ")
+				help += style.Foreground(lg.BrightBlue).Render(" - Functions")
 			}
+			help += "] "
 
 		case exportMode:
 			help += "c"
