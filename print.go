@@ -15,7 +15,7 @@ func printPE(filePath string, imports, exports bool) {
 	defer f.Close()
 
 	style := lg.NewStyle()
-	fmt.Println(filePath)
+	fmt.Println(filePath + style.Foreground(lg.BrightBlack).Render(" "+describeToolset(f)))
 
 	if imports {
 		if !f.HasImport && !f.HasDelayImp {

@@ -57,6 +57,9 @@ type model struct {
 
 	filePath string
 
+	// toolset names the toolchain that built filePath, e.g. "MSVC 14.38.33145".
+	toolset string
+
 	imports []*importItem
 	exports []exportItem
 
@@ -162,6 +165,8 @@ func initModel(filePath string, history []string) model {
 	// Every name below is copied into the model, so the mapping can go as soon
 	// as we are done reading it.
 	defer f.Close()
+
+	result.toolset = describeToolset(f)
 
 	// The loader resolves dependencies relative to the image the walk started
 	// from, not to the file currently being inspected.

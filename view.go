@@ -48,6 +48,9 @@ func (m model) View() tea.View {
 	style := lg.NewStyle()
 
 	header := m.filePath
+	if m.toolset != "" {
+		header += style.Foreground(lg.BrightBlack).Render(" " + m.toolset)
+	}
 	length := m.length()
 
 	switch m.mode {

@@ -394,6 +394,17 @@ func TestViewRenders(t *testing.T) {
 	}
 }
 
+func TestViewShowsToolset(t *testing.T) {
+	m := newImportModel([]int{0})
+	m.filePath = `C:\app\app.exe`
+	m.toolset = "MSVC 14.38.33145"
+	m.width, m.height = 120, 24
+
+	if view := m.View(); !strings.Contains(view.Content, "MSVC 14.38.33145") {
+		t.Error("the toolset version should appear in the header")
+	}
+}
+
 func TestViewShowsLoadError(t *testing.T) {
 	m := model{mode: importMode, width: 80, height: 24, loadErr: "failed to parse PE: bad magic"}
 
