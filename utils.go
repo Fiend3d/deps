@@ -15,7 +15,32 @@ import (
 // must Close it: pe.New memory maps the whole image, and on Windows a live
 // mapping keeps a lock on the file.
 func parseFile(filePath string) (*pe.File, error) {
-	f, err := pe.New(filePath, &pe.Options{})
+	return parseWith(filePath, &pe.Options{})
+}
+
+// parseImports parses only what a dependency walk reads. Resources, relocations
+// and Authenticode signatures are the costly directories and none of them
+// matter here — skipping them makes a recursive walk several times faster.
+func parseImports(filePath string) (*pe.File, error) {
+	return parseWith(filePath, &pe.Options{
+		OmitExportDirectory:       true,
+		OmitExceptionDirectory:    true,
+		OmitResourceDirectory:     true,
+		OmitSecurityDirectory:     true,
+		OmitRelocDirectory:        true,
+		OmitDebugDirectory:        true,
+		OmitArchitectureDirectory: true,
+		OmitGlobalPtrDirectory:    true,
+		OmitTLSDirectory:          true,
+		OmitLoadConfigDirectory:   true,
+		OmitBoundImportDirectory:  true,
+		OmitIATDirectory:          true,
+		OmitCLRHeaderDirectory:    true,
+	})
+}
+
+func parseWith(filePath string, opts *pe.Options) (*pe.File, error) {
+	f, err := pe.New(filePath, opts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open PE file: %w", err)
 	}
@@ -34,8 +59,11 @@ func truncate(s string, width int) string {
 // Windows loader uses. rootPath is the image the walk started from: the loader
 // resolves every dependency relative to the process image, not to the DLL that
 // happens to name it.
-func searchDirs(rootPath string, machine pe.ImageFileHeaderMachineType) []string {
-	dirs := []string{filepath.Dir(rootPath)}
+//
+// systemCount is how many leading entries are the image's own directory and the
+// Windows system directories; everything after them came from PATH.
+func searchDirs(rootPath string, machine pe.ImageFileHeaderMachineType) (dirs []string, systemCount int) {
+	dirs = []string{filepath.Dir(rootPath)}
 
 	winDir := os.Getenv("SystemRoot")
 	if winDir == "" {
@@ -52,9 +80,11 @@ func searchDirs(rootPath string, machine pe.ImageFileHeaderMachineType) []string
 	}
 
 	dirs = append(dirs, winDir)
+	systemCount = len(dirs)
+
 	dirs = append(dirs, filepath.SplitList(os.Getenv("PATH"))...)
 
-	return dirs
+	return dirs, systemCount
 }
 
 // isAPISet reports whether name is an API set contract rather than a real DLL.

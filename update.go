@@ -19,24 +19,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch data.Button {
 		case tea.MouseLeft:
 			m.click = newClick(data.X, data.Y, &m.click)
-			switch m.mode {
-			case importMode:
-				if m.click.y > 0 && m.click.y < m.height-1 {
-					if m.click.y-1 < m.length()-m.start {
-						m.cursor = m.click.y - 1 + m.start
-						if m.click.doubleClick {
-							mappedIndex, _ := m.mapIndex(m.cursor)
-							item := m.imports[mappedIndex]
-							if item.found {
-								return m.right()
-							}
+			if m.click.y > 0 && m.click.y < m.height-1 &&
+				m.click.y-1 < m.length()-m.start {
+				m.cursor = m.click.y - 1 + m.start
+
+				if m.click.doubleClick {
+					switch m.mode {
+					case importMode:
+						if dep, ok := m.selectedDep(); ok && dep.found {
+							return m.right()
 						}
-					}
-				}
-			case exportMode:
-				if m.click.y > 0 && m.click.y < m.height-1 {
-					if m.click.y-1 < m.length()-m.start {
-						m.cursor = m.click.y - 1 + m.start
+					case treeMode:
+						// In the tree a double click opens the node rather than
+						// re-rooting, matching space.
+						m.toggleNode()
+						return m, nil
 					}
 				}
 			}
@@ -70,19 +67,46 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
-		case "l", "right", "enter":
+		case "r":
 			switch m.mode {
-			case importMode:
+			case treeMode:
+				m.mode = importMode
+			default:
+				m.mode = treeMode
+			}
+			m.cursor = 0
+			m.start = 0
+			return m, nil
+
+		case "enter":
+			switch m.mode {
+			case importMode, treeMode:
 				return m.right()
 			}
 
+		case "l", "right":
+			switch m.mode {
+			case importMode:
+				return m.right()
+			case treeMode:
+				m.toggleNode()
+				return m, nil
+			}
+
 		case "h", "left":
+			if m.mode == treeMode {
+				m.collapseNode()
+				return m, nil
+			}
 			if len(m.history) > 1 {
 				return m.left()
 			}
 
 		case "space":
 			switch m.mode {
+			case treeMode:
+				m.toggleNode()
+				return m, nil
 			case importMode:
 				if m.length() == 0 {
 					return m, nil
@@ -104,10 +128,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			switch m.mode {
-			case importMode:
-				mappedCursor, _ := m.mapIndex(m.cursor)
-				item := m.imports[mappedCursor]
-				m.copy("name", item.dllName)
+			case importMode, treeMode:
+				if dep, ok := m.selectedDep(); ok {
+					m.copy("name", dep.name)
+				}
 				return m, nil
 			case exportMode:
 				mappedCursor, _ := m.mapIndex(m.cursor)
@@ -121,11 +145,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			switch m.mode {
-			case importMode:
-				mappedCursor, _ := m.mapIndex(m.cursor)
-				item := m.imports[mappedCursor]
-				if item.found {
-					m.copy("path", item.path)
+			case importMode, treeMode:
+				if dep, ok := m.selectedDep(); ok && dep.found {
+					m.copy("path", dep.path)
 					return m, nil
 				}
 			}
@@ -139,7 +161,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				names := make([]string, len(m.imports))
 				for i := range m.imports {
 					item := m.imports[i]
-					names[i] = item.dllName
+					names[i] = item.name
 				}
 				m.copy("all names", strings.Join(names, "\n"))
 			case exportMode:
@@ -148,6 +170,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					names[i] = m.exports[i].String()
 				}
 				m.copy("all exports", strings.Join(names, "\n"))
+			case treeMode:
+				m.copy("tree", treeText(m.visible))
 			}
 
 		case "f":
@@ -155,11 +179,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			switch m.mode {
-			case importMode:
-				mappedCursor, _ := m.mapIndex(m.cursor)
-				item := m.imports[mappedCursor]
-				if item.found {
-					m.copy("functions", strings.Join(item.functions, "\n"))
+			case importMode, treeMode:
+				if dep, ok := m.selectedDep(); ok && dep.found {
+					m.copy("functions", strings.Join(dep.functions, "\n"))
 				}
 			}
 

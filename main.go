@@ -20,6 +20,9 @@ func main() {
 	version := flag.Bool("v", false, "print version")
 	imports := flag.Bool("i", false, "print imports")
 	exports := flag.Bool("e", false, "print exports")
+	recursive := flag.Bool("r", false, "print recursive dependencies")
+	unresolvedOnly := flag.Bool("u", false, "print only unresolved dependencies (recursive)")
+	plain := flag.Bool("p", false, "print without color")
 
 	flag.Parse()
 
@@ -35,7 +38,14 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  -v    print version\n")
 		fmt.Fprintf(os.Stderr, "  -i    print imports\n")
 		fmt.Fprintf(os.Stderr, "  -e    print exports\n")
+		fmt.Fprintf(os.Stderr, "  -r    print recursive dependencies\n")
+		fmt.Fprintf(os.Stderr, "  -u    print only unresolved dependencies (recursive)\n")
+		fmt.Fprintf(os.Stderr, "  -p    print without color\n")
 		os.Exit(1)
+	}
+
+	if *plain {
+		plainOutput()
 	}
 
 	filePath, err := filepath.Abs(args[0])
@@ -43,8 +53,14 @@ func main() {
 		log.Fatalf("failed to convert (%s) to absolute path: %v", args[0], err)
 	}
 
-	if *imports || *exports {
-		printPE(filePath, *imports, *exports)
+	// -u is a check rather than a listing: it stands alone and its findings
+	// decide the exit status.
+	if *unresolvedOnly {
+		os.Exit(printUnresolved(filePath))
+	}
+
+	if *imports || *exports || *recursive {
+		printPE(filePath, *imports, *exports, *recursive)
 		return
 	}
 

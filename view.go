@@ -7,6 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	lg "charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // counter renders the header's position indicator.
@@ -31,6 +32,67 @@ func (m *model) emptyBody(empty string) string {
 	return style.Foreground(lg.Green).Render(empty)
 }
 
+// renderTreeRow draws one row of the dependency tree: cursor, branch glyph,
+// module name coloured by how it resolved, state marker, and the directory
+// right-aligned when there is room for it.
+func (m *model) renderTreeRow(node *treeNode, current bool) string {
+	style := lg.NewStyle()
+
+	line := "   "
+	if current {
+		line = " > "
+	}
+	line += style.Foreground(lg.BrightBlack).Render(node.prefix())
+
+	label := node.dep.name
+	if node.dep.delayed {
+		label += " (delay)"
+	}
+	label += node.marker()
+
+	var colour ansi.BasicColor
+	switch {
+	case node.cycle:
+		colour = lg.Yellow
+		if current {
+			colour = lg.BrightYellow
+		}
+	case node.dep.found:
+		colour = lg.Green
+		if current {
+			colour = lg.BrightGreen
+		}
+	case node.dep.virtual:
+		label = node.dep.name + " (api-set)"
+		colour = lg.Cyan
+		if current {
+			colour = lg.BrightCyan
+		}
+	default:
+		colour = lg.Red
+		if current {
+			colour = lg.BrightRed
+		}
+	}
+	line += style.Foreground(colour).Render(label)
+
+	if !node.dep.found {
+		return line
+	}
+
+	// Drop the directory column rather than asking for a negative width.
+	rightSize := m.width - lg.Width(line) - 1
+	if rightSize <= 0 {
+		return line
+	}
+	rightStyle := style.Width(rightSize).Align(lg.Right)
+	if !current {
+		rightStyle = rightStyle.Foreground(lg.BrightBlack)
+	}
+
+	return line + " " + rightStyle.Render(truncate(filepath.Dir(node.dep.path), rightSize))
+}
+
 func (m model) View() tea.View {
 	var result tea.View
 	result.AltScreen = true
@@ -41,6 +103,8 @@ func (m model) View() tea.View {
 		result.WindowTitle = "Deps - Import"
 	case exportMode:
 		result.WindowTitle = "Deps - Export"
+	case treeMode:
+		result.WindowTitle = "Deps - Tree"
 	}
 
 	var s strings.Builder
@@ -60,6 +124,9 @@ func (m model) View() tea.View {
 	case exportMode:
 		header += style.Foreground(lg.BrightBlue).Render(" EXPORT ")
 		header += m.counter(len(m.exports))
+	case treeMode:
+		header += style.Foreground(lg.BrightMagenta).Render(" TREE ")
+		header += m.counter(length)
 	}
 
 	s.WriteString(truncate(header, m.width))
@@ -91,7 +158,7 @@ func (m model) View() tea.View {
 				item := m.imports[mappedIndex]
 
 				if function == -1 {
-					dllName := item.dllName
+					dllName := item.name
 					if item.delayed {
 						dllName += " (delay)"
 					}
@@ -140,6 +207,26 @@ func (m model) View() tea.View {
 				}
 
 				s.WriteString(truncate(line, m.width))
+				s.WriteRune('\n')
+				lineCount++
+			}
+		}
+	case treeMode:
+		if length == 0 {
+			s.WriteString(truncate(m.emptyBody("No dependencies"), m.width))
+			s.WriteRune('\n')
+			lineCount++
+		} else {
+			for i := range length {
+				if i+1 > m.height-2 || i+m.start >= length {
+					break
+				}
+
+				index := i + m.start
+				s.WriteString(truncate(
+					m.renderTreeRow(m.visible[index], index == m.cursor),
+					m.width,
+				))
 				s.WriteRune('\n')
 				lineCount++
 			}
@@ -203,12 +290,33 @@ func (m model) View() tea.View {
 
 	help := style.Foreground(lg.BrightBlue).Render("Keys: ")
 
-	mappedCursor, function := m.mapIndex(m.cursor)
+	// Only the flat import list uses the two-level mapping; in tree mode the
+	// cursor indexes m.visible directly.
+	mappedCursor, function := -1, -1
+	if m.mode == importMode {
+		mappedCursor, function = m.mapIndex(m.cursor)
+	}
 
 	switch m.mode {
+	case treeMode:
+		help += "r"
+		help += style.Foreground(lg.BrightBlue).Render(" - IMPORT ")
+		if node := m.selectedNode(); node != nil && node.expandable() {
+			help += "Space"
+			if node.expanded {
+				help += style.Foreground(lg.BrightBlue).Render(" - Collapse ")
+			} else {
+				help += style.Foreground(lg.BrightBlue).Render(" - Expand ")
+			}
+			help += "Enter"
+			help += style.Foreground(lg.BrightBlue).Render(" - Open ")
+		}
+
 	case importMode:
 		help += "Tab"
 		help += style.Foreground(lg.BrightBlue).Render(" - EXPORT ")
+		help += "r"
+		help += style.Foreground(lg.BrightBlue).Render(" - TREE ")
 
 		if length > 0 {
 			item := m.imports[mappedCursor]
@@ -239,12 +347,11 @@ func (m model) View() tea.View {
 		help += style.Foreground(lg.BrightBlue).Render(" - All ")
 
 		switch m.mode {
-		case importMode:
-			item := m.imports[mappedCursor]
+		case importMode, treeMode:
 			help += "c"
 			help += style.Foreground(lg.BrightBlue).Render(" - Selected")
 
-			if item.found {
+			if dep, ok := m.selectedDep(); ok && dep.found {
 				help += " p"
 				help += style.Foreground(lg.BrightBlue).Render(" - Path ")
 				help += "f"

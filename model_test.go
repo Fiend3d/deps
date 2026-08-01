@@ -18,9 +18,11 @@ func newImportModel(fns []int, expanded ...int) model {
 	m := model{mode: importMode}
 	for i, n := range fns {
 		m.imports = append(m.imports, &importItem{
-			dllName:   fmt.Sprintf("dll%d.dll", i),
-			found:     true,
-			functions: make([]string, n),
+			dependency: dependency{
+				name:      fmt.Sprintf("dll%d.dll", i),
+				found:     true,
+				functions: make([]string, n),
+			},
 		})
 	}
 	for _, i := range expanded {
@@ -228,12 +230,12 @@ func TestInitModelSurvivesUnmap(t *testing.T) {
 
 	// Read everything back now that the mapping is gone.
 	for _, item := range m.imports {
-		if item.dllName == "" {
+		if item.name == "" {
 			t.Error("import with an empty name")
 		}
 		for _, fn := range item.functions {
 			if fn == "" {
-				t.Errorf("%s: imported function with an empty name", item.dllName)
+				t.Errorf("%s: imported function with an empty name", item.name)
 			}
 		}
 	}
@@ -455,10 +457,62 @@ func TestSearchDirs(t *testing.T) {
 			t.Setenv("SystemRoot", `C:\Win`)
 			t.Setenv("PATH", `C:\extra`)
 
-			got := searchDirs(`C:\app\app.exe`, tt.machine)
+			got, systemCount := searchDirs(`C:\app\app.exe`, tt.machine)
 			if !slices.Equal(got, tt.want) {
 				t.Errorf("searchDirs() = %v, want %v", got, tt.want)
 			}
+			// The image directory and the two Windows directories; C:\extra
+			// came from PATH and must fall outside the system range.
+			if systemCount != 3 {
+				t.Errorf("systemCount = %d, want 3", systemCount)
+			}
 		})
+	}
+}
+
+// An API set contract must not resolve to a same-named file sitting in some
+// unrelated PATH directory: the loader would never load it.
+func TestAPISetIgnoresPathDirectories(t *testing.T) {
+	system, stray := t.TempDir(), t.TempDir()
+
+	const contract = "api-ms-win-core-processthreads-l1-1-1.dll"
+	if err := os.WriteFile(filepath.Join(stray, contract), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// system dirs first, then the PATH entry holding the stray copy.
+	search := newSearchPath([]string{system, stray}, 1)
+
+	if path, found := search.find(contract); found {
+		t.Errorf("resolved the contract to %q; a PATH copy is not what loads", path)
+	}
+
+	// A real DLL still resolves from PATH as usual.
+	if err := os.WriteFile(filepath.Join(stray, "helper.dll"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, found := newSearchPath([]string{system, stray}, 1).find("helper.dll"); !found {
+		t.Error("an ordinary DLL should still resolve from PATH")
+	}
+}
+
+// The same name is looked up thousands of times in a recursive walk.
+func TestSearchPathCachesLookups(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.dll"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	search := newSearchPath([]string{dir}, 1)
+	first, _ := search.find("a.dll")
+
+	// Removing the file must not change the answer: it came from the cache.
+	if err := os.Remove(filepath.Join(dir, "a.dll")); err != nil {
+		t.Fatal(err)
+	}
+	second, found := search.find("A.DLL")
+
+	if !found || second != first {
+		t.Errorf("second lookup = %q/%v, want the cached %q", second, found, first)
 	}
 }

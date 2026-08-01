@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/saferwall/pe"
 )
 
 type mode int
@@ -12,17 +11,13 @@ type mode int
 const (
 	importMode mode = iota
 	exportMode
+	treeMode
 )
 
+// importItem is one row of the flat import list: a resolved dependency plus the
+// list's own expand state.
 type importItem struct {
-	dllName string
-	found   bool
-	delayed bool
-	// virtual marks an API set contract that has no file on disk; the loader
-	// still satisfies it, so it is not a missing dependency.
-	virtual       bool
-	path          string
-	functions     []string
+	dependency
 	showFunctions bool
 }
 
@@ -63,6 +58,17 @@ type model struct {
 	imports []*importItem
 	exports []exportItem
 
+	// Recursive tree state. roots holds the direct dependencies; visible is the
+	// flattened list of on-screen rows, rebuilt whenever a node expands or
+	// collapses, so the cursor can index it directly.
+	roots   []*treeNode
+	visible []*treeNode
+
+	// search is the loader search path for this walk; resolve turns a module
+	// path into its dependencies, and is swapped out in tests.
+	search  *searchPath
+	resolve resolver
+
 	cursor int
 	start  int
 
@@ -95,8 +101,88 @@ func (m *model) length() int {
 		return count
 	case exportMode:
 		return len(m.exports)
+	case treeMode:
+		return len(m.visible)
 	}
 	return 0
+}
+
+// selectedNode returns the tree node under the cursor.
+func (m *model) selectedNode() *treeNode {
+	if m.mode != treeMode || m.cursor < 0 || m.cursor >= len(m.visible) {
+		return nil
+	}
+	return m.visible[m.cursor]
+}
+
+// selectedDep returns the dependency under the cursor, in whichever of the two
+// dependency views is active.
+func (m *model) selectedDep() (dependency, bool) {
+	switch m.mode {
+	case importMode:
+		if m.length() == 0 {
+			return dependency{}, false
+		}
+		item, _ := m.mapIndex(m.cursor)
+		if item < 0 || item >= len(m.imports) {
+			return dependency{}, false
+		}
+		return m.imports[item].dependency, true
+	case treeMode:
+		if node := m.selectedNode(); node != nil {
+			return node.dep, true
+		}
+	}
+	return dependency{}, false
+}
+
+// refreshVisible rebuilds the flattened tree after an expand or collapse and
+// keeps the cursor and scroll offset in range.
+func (m *model) refreshVisible() {
+	m.visible = flattenTree(m.roots)
+	m.cursor = max(0, min(m.cursor, len(m.visible)-1))
+	m.updateStart()
+}
+
+// toggleNode opens or closes the node under the cursor, resolving its children
+// on first open.
+func (m *model) toggleNode() {
+	node := m.selectedNode()
+	if node == nil || !node.expandable() {
+		return
+	}
+
+	node.toggle(m.resolve)
+	if node.loadErr != "" {
+		m.status = node.loadErr
+	}
+	m.refreshVisible()
+}
+
+// collapseNode closes the node under the cursor, or moves to its parent when it
+// is already closed — the usual way out of a deep tree.
+func (m *model) collapseNode() {
+	node := m.selectedNode()
+	if node == nil {
+		return
+	}
+
+	if node.expanded {
+		node.expanded = false
+		m.refreshVisible()
+		return
+	}
+
+	if node.parent == nil || node.parent.depth < 0 {
+		return
+	}
+	for i, candidate := range m.visible {
+		if candidate == node.parent {
+			m.cursor = i
+			m.updateStart()
+			return
+		}
+	}
 }
 
 func (m *model) mapFrom(item, function int) int {
@@ -170,38 +256,22 @@ func initModel(filePath string, history []string) model {
 
 	// The loader resolves dependencies relative to the image the walk started
 	// from, not to the file currently being inspected.
-	dirs := searchDirs(result.history[0], f.NtHeader.FileHeader.Machine)
+	result.search = newSearchPath(searchDirs(result.history[0], f.NtHeader.FileHeader.Machine))
 
-	addImport := func(name string, functions []pe.ImportFunction, delayed bool) {
-		path, found := findDependency(name, dirs)
-		item := &importItem{
-			dllName:   name,
-			found:     found,
-			delayed:   delayed,
-			virtual:   !found && isAPISet(name),
-			path:      path,
-			functions: make([]string, len(functions)),
-		}
-		for i, fn := range functions {
-			if fn.ByOrdinal {
-				item.functions[i] = fmt.Sprintf("ordinal:%d", fn.Ordinal)
-			} else {
-				item.functions[i] = fn.Name
-			}
-		}
-		result.imports = append(result.imports, item)
+	result.resolve = func(path string) ([]dependency, error) {
+		return resolveDeps(path, result.search)
 	}
 
-	if f.HasImport {
-		for _, imp := range f.Imports {
-			addImport(imp.Name, imp.Functions, false)
-		}
+	deps := depsFromFile(f, result.search)
+	for _, dep := range deps {
+		result.imports = append(result.imports, &importItem{dependency: dep})
 	}
-	if f.HasDelayImp {
-		for _, imp := range f.DelayImports {
-			addImport(imp.Name, imp.Functions, true)
-		}
-	}
+
+	// The tree is only node structs until something is expanded, so building it
+	// up front costs no I/O and leaves `r` instant.
+	result.roots = newTree(deps, filePath)
+	result.visible = flattenTree(result.roots)
+
 	if f.HasExport {
 		for _, fn := range f.Export.Functions {
 			var item exportItem
@@ -254,16 +324,12 @@ func (m *model) moveCursor(move int) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) right() (tea.Model, tea.Cmd) {
-	if m.length() == 0 {
-		return m, nil
-	}
-	mappedCursor, _ := m.mapIndex(m.cursor)
-	item := m.imports[mappedCursor]
-	if !item.found {
+	dep, ok := m.selectedDep()
+	if !ok || !dep.found {
 		return m, nil
 	}
 
-	newModel := initModel(item.path, m.history)
+	newModel := initModel(dep.path, m.history)
 	if newModel.loadErr != "" {
 		// Stay put and report it rather than descending into a file we could
 		// not read.
@@ -272,6 +338,8 @@ func (m *model) right() (tea.Model, tea.Cmd) {
 	}
 	newModel.width = m.width
 	newModel.height = m.height
+	// Keep exploring the way the user already was.
+	newModel.mode = m.mode
 	return newModel, nil
 }
 
