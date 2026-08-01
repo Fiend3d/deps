@@ -38,17 +38,25 @@ func main() {
 		os.Exit(1)
 	}
 
-	if *imports || *exports {
-		printPE(args[0], *imports, *exports)
-		return
-	}
-
 	filePath, err := filepath.Abs(args[0])
 	if err != nil {
 		log.Fatalf("failed to convert (%s) to absolute path: %v", args[0], err)
 	}
 
-	p := tea.NewProgram(initModel(filePath, []string{}))
+	if *imports || *exports {
+		printPE(filePath, *imports, *exports)
+		return
+	}
+
+	// Fail before the TUI takes over the terminal: once bubbletea owns the
+	// screen, exiting without letting it restore leaves the shell in the alt
+	// screen with mouse tracking on.
+	m := initModel(filePath, []string{})
+	if m.loadErr != "" {
+		log.Fatal(m.loadErr)
+	}
+
+	p := tea.NewProgram(m)
 
 	_, err = p.Run()
 	if err != nil {

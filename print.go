@@ -2,27 +2,46 @@ package main
 
 import (
 	"fmt"
+	"log"
 
 	lg "charm.land/lipgloss/v2"
 )
 
 func printPE(filePath string, imports, exports bool) {
-	f := parseFile(filePath)
+	f, err := parseFile(filePath)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer f.Close()
 
 	style := lg.NewStyle()
 	fmt.Println(filePath)
 
 	if imports {
-		if !f.HasImport {
+		if !f.HasImport && !f.HasDelayImp {
 			fmt.Println(style.Foreground(lg.Green).Render("No imports"))
 		} else {
-			for _, imp := range f.Imports {
-				_, found := findDependency(imp.Name, filePath)
-				if found {
-					fmt.Println(style.Foreground(lg.Green).Render(imp.Name))
-				} else {
-					fmt.Println(style.Foreground(lg.Red).Render(imp.Name))
+			dirs := searchDirs(filePath, f.NtHeader.FileHeader.Machine)
+			printImport := func(name string, delayed bool) {
+				_, found := findDependency(name, dirs)
+				line := name
+				if delayed {
+					line += " (delay)"
 				}
+				switch {
+				case found:
+					fmt.Println(style.Foreground(lg.Green).Render(line))
+				case isAPISet(name):
+					fmt.Println(style.Foreground(lg.Cyan).Render(line + " (api-set)"))
+				default:
+					fmt.Println(style.Foreground(lg.Red).Render(line))
+				}
+			}
+			for _, imp := range f.Imports {
+				printImport(imp.Name, false)
+			}
+			for _, imp := range f.DelayImports {
+				printImport(imp.Name, true)
 			}
 		}
 	}

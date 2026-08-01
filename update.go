@@ -52,6 +52,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.KeyMsg:
+		// Any keypress supersedes the last transient message.
+		m.status = ""
+
 		switch msg.String() {
 		case "q":
 			return m, tea.Quit
@@ -104,12 +107,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case importMode:
 				mappedCursor, _ := m.mapIndex(m.cursor)
 				item := m.imports[mappedCursor]
-				clipboardWrite(item.dllName)
+				m.copy("name", item.dllName)
 				return m, nil
 			case exportMode:
 				mappedCursor, _ := m.mapIndex(m.cursor)
 				item := m.exports[mappedCursor]
-				clipboardWrite(item.String())
+				m.copy("export", item.String())
 				return m, nil
 			}
 
@@ -122,7 +125,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				mappedCursor, _ := m.mapIndex(m.cursor)
 				item := m.imports[mappedCursor]
 				if item.found {
-					clipboardWrite(item.path)
+					m.copy("path", item.path)
 					return m, nil
 				}
 			}
@@ -138,13 +141,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					item := m.imports[i]
 					names[i] = item.dllName
 				}
-				clipboardWrite(strings.Join(names, "\n"))
+				m.copy("all names", strings.Join(names, "\n"))
 			case exportMode:
 				names := make([]string, len(m.exports))
 				for i := range m.exports {
 					names[i] = m.exports[i].String()
 				}
-				clipboardWrite(strings.Join(names, "\n"))
+				m.copy("all exports", strings.Join(names, "\n"))
 			}
 
 		case "f":
@@ -156,7 +159,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				mappedCursor, _ := m.mapIndex(m.cursor)
 				item := m.imports[mappedCursor]
 				if item.found {
-					clipboardWrite(strings.Join(item.functions, "\n"))
+					m.copy("functions", strings.Join(item.functions, "\n"))
 				}
 			}
 

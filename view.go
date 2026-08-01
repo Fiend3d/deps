@@ -9,6 +9,28 @@ import (
 	lg "charm.land/lipgloss/v2"
 )
 
+// counter renders the header's position indicator.
+func (m *model) counter(length int) string {
+	switch {
+	case m.loadErr != "":
+		return "[error]"
+	case length == 0:
+		return "[empty]"
+	default:
+		return fmt.Sprintf("[%d/%d]", m.cursor+1, length)
+	}
+}
+
+// emptyBody renders the body of an empty list: the load failure if there was
+// one, otherwise the given reassurance.
+func (m *model) emptyBody(empty string) string {
+	style := lg.NewStyle()
+	if m.loadErr != "" {
+		return style.Foreground(lg.BrightRed).Render(m.loadErr)
+	}
+	return style.Foreground(lg.Green).Render(empty)
+}
+
 func (m model) View() tea.View {
 	var result tea.View
 	result.AltScreen = true
@@ -31,18 +53,10 @@ func (m model) View() tea.View {
 	switch m.mode {
 	case importMode:
 		header += style.Foreground(lg.Yellow).Render(" IMPORT ")
-		if length == 0 {
-			header += "[empty]"
-		} else {
-			header += fmt.Sprintf("[%d/%d]", m.cursor+1, length)
-		}
+		header += m.counter(length)
 	case exportMode:
 		header += style.Foreground(lg.BrightBlue).Render(" EXPORT ")
-		if len(m.exports) == 0 {
-			header += "[empty]"
-		} else {
-			header += fmt.Sprintf("[%d/%d]", m.cursor+1, len(m.exports))
-		}
+		header += m.counter(len(m.exports))
 	}
 
 	s.WriteString(truncate(header, m.width))
@@ -52,10 +66,7 @@ func (m model) View() tea.View {
 	switch m.mode {
 	case importMode:
 		if length == 0 {
-			s.WriteString(truncate(
-				style.Foreground(lg.Green).Render("No imports"),
-				m.width,
-			))
+			s.WriteString(truncate(m.emptyBody("No imports"), m.width))
 			s.WriteRune('\n')
 			lineCount++
 		} else {
@@ -78,6 +89,9 @@ func (m model) View() tea.View {
 
 				if function == -1 {
 					dllName := item.dllName
+					if item.delayed {
+						dllName += " (delay)"
+					}
 
 					if item.found {
 						if current {
@@ -85,14 +99,26 @@ func (m model) View() tea.View {
 						} else {
 							line += style.Foreground(lg.Green).Render(dllName)
 						}
+						// Drop the directory column entirely rather than
+						// asking for a negative width when the name alone
+						// fills the window.
 						rightSize := m.width - lg.Width(line) - 1
-						rightDir := filepath.Dir(item.path)
-						rightStr := truncate(rightDir, rightSize)
-						rightStyle := style.Width(rightSize).Align(lg.Right)
+						if rightSize > 0 {
+							rightDir := filepath.Dir(item.path)
+							rightStr := truncate(rightDir, rightSize)
+							rightStyle := style.Width(rightSize).Align(lg.Right)
+							if current {
+								line += " " + rightStyle.Render(rightStr)
+							} else {
+								line += " " + rightStyle.Foreground(lg.BrightBlack).Render(rightStr)
+							}
+						}
+					} else if item.virtual {
+						dllName += " (api-set)"
 						if current {
-							line += " " + rightStyle.Render(rightStr)
+							line += style.Foreground(lg.BrightCyan).Render(dllName)
 						} else {
-							line += " " + rightStyle.Foreground(lg.BrightBlack).Render(rightStr)
+							line += style.Foreground(lg.Cyan).Render(dllName)
 						}
 					} else {
 						if current {
@@ -117,10 +143,7 @@ func (m model) View() tea.View {
 		}
 	case exportMode:
 		if length == 0 {
-			s.WriteString(truncate(
-				style.Foreground(lg.Green).Render("No exports"),
-				m.width,
-			))
+			s.WriteString(truncate(m.emptyBody("No exports"), m.width))
 			s.WriteRune('\n')
 			lineCount++
 		} else {
@@ -147,13 +170,15 @@ func (m model) View() tea.View {
 						line += style.Foreground(lg.Yellow).Render(item.name)
 					}
 					rightSize := m.width - lg.Width(line)
-					rightStr := fmt.Sprintf(" (ordinal %d, RVA 0x%08X)", item.ordinal, item.rva)
-					rightStr = truncate(rightStr, rightSize)
-					rightStyle := style.Width(rightSize).Align(lg.Right)
-					if !current {
-						rightStyle = rightStyle.Foreground(lg.BrightBlack)
+					if rightSize > 0 {
+						rightStr := fmt.Sprintf(" (ordinal %d, RVA 0x%08X)", item.ordinal, item.rva)
+						rightStr = truncate(rightStr, rightSize)
+						rightStyle := style.Width(rightSize).Align(lg.Right)
+						if !current {
+							rightStyle = rightStyle.Foreground(lg.BrightBlack)
+						}
+						line += rightStyle.Render(rightStr)
 					}
-					line += rightStyle.Render(rightStr)
 				} else {
 					if current {
 						line += fmt.Sprintf("(ordinal %d only, RVA 0x%08X)", item.ordinal, item.rva)
@@ -230,7 +255,11 @@ func (m model) View() tea.View {
 		}
 	}
 
-	s.WriteString(truncate(help, m.width))
+	if m.status != "" {
+		s.WriteString(truncate(style.Foreground(lg.BrightYellow).Render(m.status), m.width))
+	} else {
+		s.WriteString(truncate(help, m.width))
+	}
 
 	result.Content = s.String()
 	return result

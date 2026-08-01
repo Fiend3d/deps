@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/saferwall/pe"
 )
 
 type mode int
@@ -14,8 +15,12 @@ const (
 )
 
 type importItem struct {
-	dllName       string
-	found         bool
+	dllName string
+	found   bool
+	delayed bool
+	// virtual marks an API set contract that has no file on disk; the loader
+	// still satisfies it, so it is not a missing dependency.
+	virtual       bool
 	path          string
 	functions     []string
 	showFunctions bool
@@ -62,6 +67,14 @@ type model struct {
 	height int
 
 	history []string
+
+	// loadErr is set when this model's own file could not be read; the list is
+	// empty and the body shows the failure instead.
+	loadErr string
+
+	// status is a transient message shown in the help line, cleared on the next
+	// keypress.
+	status string
 }
 
 func (m *model) length() int {
@@ -135,31 +148,53 @@ func (m *model) mapIndex(index int) (int, int) {
 }
 
 func initModel(filePath string, history []string) model {
-	f := parseFile(filePath)
-
 	result := model{
 		filePath: filePath,
 		history:  append(history, filePath),
 		mode:     importMode,
 	}
 
+	f, err := parseFile(filePath)
+	if err != nil {
+		result.loadErr = err.Error()
+		return result
+	}
+	// Every name below is copied into the model, so the mapping can go as soon
+	// as we are done reading it.
+	defer f.Close()
+
+	// The loader resolves dependencies relative to the image the walk started
+	// from, not to the file currently being inspected.
+	dirs := searchDirs(result.history[0], f.NtHeader.FileHeader.Machine)
+
+	addImport := func(name string, functions []pe.ImportFunction, delayed bool) {
+		path, found := findDependency(name, dirs)
+		item := &importItem{
+			dllName:   name,
+			found:     found,
+			delayed:   delayed,
+			virtual:   !found && isAPISet(name),
+			path:      path,
+			functions: make([]string, len(functions)),
+		}
+		for i, fn := range functions {
+			if fn.ByOrdinal {
+				item.functions[i] = fmt.Sprintf("ordinal:%d", fn.Ordinal)
+			} else {
+				item.functions[i] = fn.Name
+			}
+		}
+		result.imports = append(result.imports, item)
+	}
+
 	if f.HasImport {
 		for _, imp := range f.Imports {
-			path, found := findDependency(imp.Name, filePath)
-			item := &importItem{
-				dllName:   imp.Name,
-				found:     found,
-				path:      path,
-				functions: make([]string, len(imp.Functions)),
-			}
-			for i, fn := range imp.Functions {
-				if fn.ByOrdinal {
-					item.functions[i] = fmt.Sprintf("ordinal:%d", fn.Ordinal)
-				} else {
-					item.functions[i] = fn.Name
-				}
-			}
-			result.imports = append(result.imports, item)
+			addImport(imp.Name, imp.Functions, false)
+		}
+	}
+	if f.HasDelayImp {
+		for _, imp := range f.DelayImports {
+			addImport(imp.Name, imp.Functions, true)
 		}
 	}
 	if f.HasExport {
@@ -182,15 +217,28 @@ func (m model) Init() tea.Cmd {
 	return nil
 }
 
+// visibleRows is the number of list rows on screen; the header and the help
+// line take one each.
+func (m *model) visibleRows() int {
+	return m.height - 2
+}
+
 func (m *model) updateStart() {
-	if m.cursor < m.start {
-		m.start = m.cursor
+	visible := m.visibleRows()
+	if visible < 1 {
+		m.start = 0
 		return
 	}
-	actualHeight := m.height - 3
-	if m.cursor > m.start+actualHeight {
-		m.start = m.cursor - actualHeight
+
+	if m.cursor < m.start {
+		m.start = m.cursor
+	} else if m.cursor > m.start+visible-1 {
+		m.start = m.cursor - visible + 1
 	}
+
+	// Never scroll past the end: without this the list keeps a stale offset
+	// when the window grows and renders a blank region below the last row.
+	m.start = max(0, min(m.start, m.length()-visible))
 }
 
 func (m *model) moveCursor(move int) (tea.Model, tea.Cmd) {
@@ -206,14 +254,20 @@ func (m *model) right() (tea.Model, tea.Cmd) {
 	}
 	mappedCursor, _ := m.mapIndex(m.cursor)
 	item := m.imports[mappedCursor]
-	if item.found {
-		newModel := initModel(item.path, m.history)
-		newModel.width = m.width
-		newModel.height = m.height
-		return newModel, nil
+	if !item.found {
+		return m, nil
 	}
 
-	return m, nil
+	newModel := initModel(item.path, m.history)
+	if newModel.loadErr != "" {
+		// Stay put and report it rather than descending into a file we could
+		// not read.
+		m.status = newModel.loadErr
+		return m, nil
+	}
+	newModel.width = m.width
+	newModel.height = m.height
+	return newModel, nil
 }
 
 func (m *model) left() (tea.Model, tea.Cmd) {
@@ -224,16 +278,26 @@ func (m *model) left() (tea.Model, tea.Cmd) {
 	return newModel, nil
 }
 
+// copy puts text on the clipboard and reports the outcome in the help line, so
+// a clipboard that refuses to initialise is not a silent no-op.
+func (m *model) copy(label, text string) {
+	if err := clipboardWrite(text); err != nil {
+		m.status = "clipboard failed: " + err.Error()
+		return
+	}
+	m.status = "copied " + label
+}
+
 func (m *model) handleWheel(steps int) (tea.Model, tea.Cmd) {
-	switch m.mode {
-	case importMode, exportMode:
-		if m.height-2 <= m.length() {
-			m.start += steps
-			actualHeight := m.height - 2
-			m.start = max(0,
-				min(m.start, m.length()-actualHeight))
-		}
+	visible := m.visibleRows()
+	if visible < 1 || m.length() <= visible {
 		return m, nil
 	}
+
+	m.start += steps
+	m.start = max(0, min(m.start, m.length()-visible))
+	// Drag the cursor along so the header counter keeps naming a visible row
+	// and the next j/k continues from what the user is looking at.
+	m.cursor = max(m.start, min(m.cursor, m.start+visible-1))
 	return m, nil
 }
