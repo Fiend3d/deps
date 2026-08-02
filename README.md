@@ -13,6 +13,7 @@ Usage: deps [flags] <filepath>
   -r    print recursive dependencies
   -u    print only unresolved dependencies (recursive)
   -p    print without color
+  -d    hide delay-loaded dependencies
 ```
 
 Color is dropped automatically when output is redirected, and when `NO_COLOR` is set.
@@ -37,7 +38,26 @@ since it fails only if that code path is called, and a healthy Windows install
 always has a few. API set contracts are never counted: they have no file on disk
 by design and the loader resolves them through its schema.
 
-`-u` stands alone and ignores `-i`/`-e`/`-r`; `-p` still applies.
+`-u` stands alone and ignores `-i`/`-e`/`-r`; `-p` and `-d` still apply.
+
+## Hiding delay-loaded modules
+
+A delay-loaded import binds on the first call into it rather than at process
+start, so it is the loader's weak edge. `-d` drops those modules from every
+listing, along with the subtrees reachable only through them:
+
+```
+$ deps -u -d C:\Windows\System32\notepad.exe
+C:\Windows\System32\notepad.exe MSVC 14.38.33145
+No unresolved dependencies
+```
+
+With `-u` it leaves the load-time findings and the exit code untouched, which
+makes `-u -d` a clean "will this image start" check. It is off by default: the
+listing should agree with the image's import table unless you ask otherwise.
+
+In the TUI the same filter is on `d`, and the header shows `-delay` while rows
+are being withheld.
 
 ## Keys
 
@@ -48,6 +68,7 @@ by design and the loader resolves them through its schema.
 | `Space` | expand / collapse |
 | `Enter` | open the selected module |
 | `h` / `left` | back (in the tree: collapse, or jump to the parent) |
+| `d` | show / hide delay-loaded modules |
 | `c` / `p` / `f` / `a` | copy name / path / functions / all |
 | `q` | quit |
 

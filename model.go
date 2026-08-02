@@ -55,8 +55,18 @@ type model struct {
 	// toolset names the toolchain that built filePath, e.g. "MSVC 14.38.33145".
 	toolset string
 
-	imports []*importItem
+	// imports holds every import of the image; visibleImports is the filtered
+	// view the list actually shows, rebuilt whenever the filter changes, so the
+	// cursor can index it directly — the same split as roots and visible below.
+	imports        []*importItem
+	visibleImports []*importItem
+
 	exports []exportItem
+
+	// hideDelayed folds delay-loaded dependencies out of both dependency views.
+	// Off by default: the list should agree with the image's import table until
+	// the user asks otherwise.
+	hideDelayed bool
 
 	// Recursive tree state. roots holds the direct dependencies; visible is the
 	// flattened list of on-screen rows, rebuilt whenever a node expands or
@@ -90,10 +100,10 @@ func (m *model) length() int {
 	switch m.mode {
 	case importMode:
 		count := 0
-		for i := range m.imports {
+		for i := range m.visibleImports {
 			count++
-			if m.imports[i].showFunctions {
-				for range m.imports[i].functions {
+			if m.visibleImports[i].showFunctions {
+				for range m.visibleImports[i].functions {
 					count++
 				}
 			}
@@ -124,10 +134,10 @@ func (m *model) selectedDep() (dependency, bool) {
 			return dependency{}, false
 		}
 		item, _ := m.mapIndex(m.cursor)
-		if item < 0 || item >= len(m.imports) {
+		if item < 0 || item >= len(m.visibleImports) {
 			return dependency{}, false
 		}
-		return m.imports[item].dependency, true
+		return m.visibleImports[item].dependency, true
 	case treeMode:
 		if node := m.selectedNode(); node != nil {
 			return node.dep, true
@@ -136,12 +146,44 @@ func (m *model) selectedDep() (dependency, bool) {
 	return dependency{}, false
 }
 
+// clampCursor keeps the cursor and scroll offset inside whichever list is on
+// screen. Both refreshers rebuild a list the other mode may be showing, so the
+// bound has to come from the active mode rather than the list just rebuilt.
+func (m *model) clampCursor() {
+	m.cursor = max(0, min(m.cursor, m.length()-1))
+	m.updateStart()
+}
+
 // refreshVisible rebuilds the flattened tree after an expand or collapse and
 // keeps the cursor and scroll offset in range.
 func (m *model) refreshVisible() {
-	m.visible = flattenTree(m.roots)
-	m.cursor = max(0, min(m.cursor, len(m.visible)-1))
-	m.updateStart()
+	m.visible = flattenTree(m.roots, m.hideDelayed)
+	m.clampCursor()
+}
+
+// refreshImports rebuilds the filtered import list and keeps the cursor and
+// scroll offset in range, the flat list's counterpart to refreshVisible.
+func (m *model) refreshImports() {
+	if !m.hideDelayed {
+		m.visibleImports = m.imports
+	} else {
+		m.visibleImports = make([]*importItem, 0, len(m.imports))
+		for _, item := range m.imports {
+			if item.delayed {
+				continue
+			}
+			m.visibleImports = append(m.visibleImports, item)
+		}
+	}
+	m.clampCursor()
+}
+
+// setHideDelayed applies the filter and rebuilds both dependency views, so the
+// flag, the key and navigation all go through one place.
+func (m *model) setHideDelayed(hide bool) {
+	m.hideDelayed = hide
+	m.refreshImports()
+	m.refreshVisible()
 }
 
 // toggleNode opens or closes the node under the cursor, resolving its children
@@ -189,13 +231,13 @@ func (m *model) mapFrom(item, function int) int {
 	switch m.mode {
 	case importMode:
 		count := 0
-		for i := range m.imports {
+		for i := range m.visibleImports {
 			if i == item && function == -1 {
 				return count
 			}
 			count++
-			if m.imports[i].showFunctions {
-				for j := range m.imports[i].functions {
+			if m.visibleImports[i].showFunctions {
+				for j := range m.visibleImports[i].functions {
 					if i == item && j == function {
 						return count
 					}
@@ -215,13 +257,13 @@ func (m *model) mapIndex(index int) (int, int) {
 	switch m.mode {
 	case importMode:
 		count := 0
-		for i := range m.imports {
+		for i := range m.visibleImports {
 			if count == index {
 				return i, -1
 			}
 			count++
-			if m.imports[i].showFunctions {
-				for j := range m.imports[i].functions {
+			if m.visibleImports[i].showFunctions {
+				for j := range m.visibleImports[i].functions {
 					if count == index {
 						return i, j
 					}
@@ -266,11 +308,12 @@ func initModel(filePath string, history []string) model {
 	for _, dep := range deps {
 		result.imports = append(result.imports, &importItem{dependency: dep})
 	}
+	result.visibleImports = result.imports
 
 	// The tree is only node structs until something is expanded, so building it
 	// up front costs no I/O and leaves `r` instant.
 	result.roots = newTree(deps, filePath)
-	result.visible = flattenTree(result.roots)
+	result.visible = flattenTree(result.roots, result.hideDelayed)
 
 	if f.HasExport {
 		for _, fn := range f.Export.Functions {
@@ -340,6 +383,7 @@ func (m *model) right() (tea.Model, tea.Cmd) {
 	newModel.height = m.height
 	// Keep exploring the way the user already was.
 	newModel.mode = m.mode
+	newModel.setHideDelayed(m.hideDelayed)
 	return newModel, nil
 }
 
@@ -348,6 +392,7 @@ func (m *model) left() (tea.Model, tea.Cmd) {
 	newModel := initModel(m.history[last], m.history[:last])
 	newModel.width = m.width
 	newModel.height = m.height
+	newModel.setHideDelayed(m.hideDelayed)
 	return newModel, nil
 }
 

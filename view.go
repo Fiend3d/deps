@@ -22,6 +22,15 @@ func (m *model) counter(length int) string {
 	}
 }
 
+// delayedHelp names what the d key would do next, the way the function list
+// help names its own toggle.
+func (m *model) delayedHelp() string {
+	if m.hideDelayed {
+		return " - Show delayed "
+	}
+	return " - Hide delayed "
+}
+
 // emptyBody renders the body of an empty list: the load failure if there was
 // one, otherwise the given reassurance.
 func (m *model) emptyBody(empty string) string {
@@ -42,13 +51,9 @@ func (m *model) renderTreeRow(node *treeNode, current bool) string {
 	if current {
 		line = " > "
 	}
-	line += style.Foreground(lg.BrightBlack).Render(node.prefix())
+	line += style.Foreground(lg.BrightBlack).Render(node.prefix(m.hideDelayed))
 
-	label := node.dep.name
-	if node.dep.delayed {
-		label += " (delay)"
-	}
-	label += node.marker()
+	label := node.dep.label() + node.marker()
 
 	var colour ansi.BasicColor
 	switch {
@@ -63,7 +68,6 @@ func (m *model) renderTreeRow(node *treeNode, current bool) string {
 			colour = lg.BrightGreen
 		}
 	case node.dep.virtual:
-		label = node.dep.name + " (api-set)"
 		colour = lg.Cyan
 		if current {
 			colour = lg.BrightCyan
@@ -129,6 +133,12 @@ func (m model) View() tea.View {
 		header += m.counter(length)
 	}
 
+	// Say so when rows are being withheld, or the counter quietly understates
+	// what the image imports.
+	if m.hideDelayed && m.mode != exportMode {
+		header += style.Foreground(lg.BrightBlack).Render(" -delay")
+	}
+
 	s.WriteString(truncate(header, m.width))
 	s.WriteRune('\n')
 
@@ -155,13 +165,10 @@ func (m model) View() tea.View {
 				}
 
 				line := cursor
-				item := m.imports[mappedIndex]
+				item := m.visibleImports[mappedIndex]
 
 				if function == -1 {
-					dllName := item.name
-					if item.delayed {
-						dllName += " (delay)"
-					}
+					dllName := item.label()
 
 					if item.found {
 						if current {
@@ -184,7 +191,6 @@ func (m model) View() tea.View {
 							}
 						}
 					} else if item.virtual {
-						dllName += " (api-set)"
 						if current {
 							line += style.Foreground(lg.BrightCyan).Render(dllName)
 						} else {
@@ -311,6 +317,7 @@ func (m model) View() tea.View {
 			help += "Enter"
 			help += style.Foreground(lg.BrightBlue).Render(" - Open ")
 		}
+		help += "d" + style.Foreground(lg.BrightBlue).Render(m.delayedHelp())
 
 	case importMode:
 		help += "Tab"
@@ -319,7 +326,7 @@ func (m model) View() tea.View {
 		help += style.Foreground(lg.BrightBlue).Render(" - TREE ")
 
 		if length > 0 {
-			item := m.imports[mappedCursor]
+			item := m.visibleImports[mappedCursor]
 			if item.found {
 				help += "Space"
 				if function == -1 {
@@ -333,6 +340,7 @@ func (m model) View() tea.View {
 				}
 			}
 		}
+		help += "d" + style.Foreground(lg.BrightBlue).Render(m.delayedHelp())
 
 	case exportMode:
 		help += "Tab"

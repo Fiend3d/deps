@@ -78,6 +78,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.start = 0
 			return m, nil
 
+		case "d":
+			switch m.mode {
+			case importMode, treeMode:
+				m.setHideDelayed(!m.hideDelayed)
+			}
+			return m, nil
+
 		case "enter":
 			switch m.mode {
 			case importMode, treeMode:
@@ -115,7 +122,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if function != -1 {
 					m.cursor = m.mapFrom(mappedCursor, -1)
 				}
-				item := m.imports[mappedCursor]
+				item := m.visibleImports[mappedCursor]
 				if item.found {
 					item.showFunctions = !item.showFunctions
 					m.updateStart()
@@ -158,9 +165,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			switch m.mode {
 			case importMode:
-				names := make([]string, len(m.imports))
-				for i := range m.imports {
-					item := m.imports[i]
+				names := make([]string, len(m.visibleImports))
+				for i := range m.visibleImports {
+					item := m.visibleImports[i]
 					names[i] = item.name
 				}
 				m.copy("all names", strings.Join(names, "\n"))

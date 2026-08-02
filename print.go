@@ -47,7 +47,7 @@ func depStyle(dep dependency, style lg.Style) lg.Style {
 	}
 }
 
-func printPE(filePath string, imports, exports, recursive bool) {
+func printPE(filePath string, imports, exports, recursive, hideDelayed bool) {
 	f, err := parseFile(filePath)
 	if err != nil {
 		log.Fatal(err)
@@ -61,7 +61,7 @@ func printPE(filePath string, imports, exports, recursive bool) {
 	if imports || recursive {
 		search := newSearchPath(searchDirs(filePath, f.NtHeader.FileHeader.Machine))
 
-		deps := depsFromFile(f, search)
+		deps := filterDelayed(depsFromFile(f, search), hideDelayed)
 
 		switch {
 		case len(deps) == 0:
@@ -69,7 +69,7 @@ func printPE(filePath string, imports, exports, recursive bool) {
 		case recursive:
 			printTree(filePath, deps, func(path string) ([]dependency, error) {
 				return resolveDeps(path, search)
-			}, style)
+			}, style, hideDelayed)
 		default:
 			for _, dep := range deps {
 				fmt.Fprintln(out, depStyle(dep, style).Render(dep.label()))
@@ -96,7 +96,7 @@ func printPE(filePath string, imports, exports, recursive bool) {
 // full depth. It returns the process exit code: non-zero only when something is
 // missing at load time, since a missing delay-load fails only if that code path
 // is ever called, and on a healthy Windows install several always are.
-func printUnresolved(filePath string) int {
+func printUnresolved(filePath string, hideDelayed bool) int {
 	f, err := parseFile(filePath)
 	if err != nil {
 		log.Fatal(err)
@@ -111,12 +111,34 @@ func printUnresolved(filePath string) int {
 		return resolveDeps(path, search)
 	})
 
+	missing = filterDelayedFindings(missing, hideDelayed)
+
 	if len(missing) == 0 {
 		fmt.Fprintln(out, style.Foreground(lg.Green).Render("No unresolved dependencies"))
 		return 0
 	}
 
 	return writeUnresolvedReport(missing)
+}
+
+// filterDelayedFindings drops the findings no importer needs at load time —
+// exactly the ones label() marks "(delay)". It filters the findings rather than
+// the walk that produced them: hard is decided by seeing both kinds of edge to
+// the same module, so dropping delayed imports any earlier would change how the
+// survivors are classified.
+func filterDelayedFindings(missing []unresolved, hide bool) []unresolved {
+	if !hide {
+		return missing
+	}
+
+	kept := make([]unresolved, 0, len(missing))
+	for _, hit := range missing {
+		if !hit.hard {
+			continue
+		}
+		kept = append(kept, hit)
+	}
+	return kept
 }
 
 // writeUnresolvedReport renders the findings and returns the exit code: 1 when
@@ -154,11 +176,12 @@ func writeUnresolvedReport(missing []unresolved) int {
 // printTree walks the dependency graph depth-first to full depth. Each module is
 // expanded the first time it is reached and later occurrences are marked
 // "(seen)"; the walk order is fixed, so that set is deterministic.
-func printTree(rootPath string, deps []dependency, resolve resolver, style lg.Style) {
+func printTree(rootPath string, deps []dependency, resolve resolver, style lg.Style, hideDelayed bool) {
 	seen := map[string]bool{strings.ToLower(rootPath): true}
 
 	var walk func(deps []dependency, prefix string)
 	walk = func(deps []dependency, prefix string) {
+		deps = filterDelayed(deps, hideDelayed)
 		for i, dep := range deps {
 			branch, indent := "├─ ", prefix+"│  "
 			if i == len(deps)-1 {

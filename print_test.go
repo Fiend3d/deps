@@ -98,7 +98,7 @@ func TestPrintTree(t *testing.T) {
 		{name: "b.dll", path: "b.dll", found: true},
 	}
 
-	printTree("root.exe", deps, g.resolve, lg.NewStyle())
+	printTree("root.exe", deps, g.resolve, lg.NewStyle(), false)
 
 	want := strings.Join([]string{
 		"├─ a.dll",
@@ -123,7 +123,7 @@ func TestPrintTreeMarksUnreadable(t *testing.T) {
 	printTree("root.exe", []dependency{
 		{name: "a.dll", path: "a.dll", found: true},
 		{name: "b.dll", path: "b.dll", found: true},
-	}, g.resolve, lg.NewStyle())
+	}, g.resolve, lg.NewStyle(), false)
 
 	got := buf.String()
 	if !strings.Contains(got, "a.dll (unreadable)") {

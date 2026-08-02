@@ -97,30 +97,38 @@ func newTree(deps []dependency, rootPath string) []*treeNode {
 }
 
 // isLast reports whether the node is the last of its siblings, which decides
-// the branch glyph it is drawn with.
-func (n *treeNode) isLast() bool {
+// the branch glyph it is drawn with. Hidden siblings do not count: the last
+// row actually drawn is the one that gets the closing glyph, or the tree ends
+// on a dangling continuation bar.
+func (n *treeNode) isLast(hideDelayed bool) bool {
 	if n.parent == nil {
 		return true
 	}
 	siblings := n.parent.children
-	return len(siblings) == 0 || siblings[len(siblings)-1] == n
+	for i := len(siblings) - 1; i >= 0; i-- {
+		if hideDelayed && siblings[i].dep.delayed {
+			continue
+		}
+		return siblings[i] == n
+	}
+	return true
 }
 
 // prefix draws the indent and branch glyph, with continuation bars for
 // ancestors that still have siblings below them.
-func (n *treeNode) prefix() string {
+func (n *treeNode) prefix(hideDelayed bool) string {
 	if n.depth <= 0 {
 		return ""
 	}
 
 	parts := make([]string, n.depth)
-	if n.isLast() {
+	if n.isLast(hideDelayed) {
 		parts[n.depth-1] = "└─ "
 	} else {
 		parts[n.depth-1] = "├─ "
 	}
 	for a, i := n.parent, n.depth-2; a != nil && i >= 0; a, i = a.parent, i-1 {
-		if a.isLast() {
+		if a.isLast(hideDelayed) {
 			parts[i] = "   "
 		} else {
 			parts[i] = "│  "
@@ -147,13 +155,17 @@ func (n *treeNode) marker() string {
 }
 
 // flattenTree walks the open nodes depth-first into the row order shown on
-// screen.
-func flattenTree(roots []*treeNode) []*treeNode {
+// screen. With hideDelayed a delay-loaded module is dropped along with its
+// whole subtree: everything under it is reachable only through that edge.
+func flattenTree(roots []*treeNode, hideDelayed bool) []*treeNode {
 	var visible []*treeNode
 
 	var walk func(nodes []*treeNode)
 	walk = func(nodes []*treeNode) {
 		for _, node := range nodes {
+			if hideDelayed && node.dep.delayed {
+				continue
+			}
 			visible = append(visible, node)
 			if node.expanded {
 				walk(node.children)

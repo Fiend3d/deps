@@ -28,6 +28,7 @@ func newImportModel(fns []int, expanded ...int) model {
 	for _, i := range expanded {
 		m.imports[i].showFunctions = true
 	}
+	m.refreshImports()
 	return m
 }
 

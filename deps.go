@@ -133,3 +133,22 @@ func (d dependency) label() string {
 	}
 	return label
 }
+
+// filterDelayed drops delay-loaded dependencies when hide is set. It filters
+// rather than letting callers skip as they go, so the result can be indexed and
+// counted directly — the printed tree picks its closing branch glyph from the
+// last element, and would otherwise draw one on a row it then hides.
+func filterDelayed(deps []dependency, hide bool) []dependency {
+	if !hide {
+		return deps
+	}
+
+	kept := make([]dependency, 0, len(deps))
+	for _, dep := range deps {
+		if dep.delayed {
+			continue
+		}
+		kept = append(kept, dep)
+	}
+	return kept
+}

@@ -68,18 +68,18 @@ func TestFlattenTree(t *testing.T) {
 	})
 	roots := g.roots("root.exe", "a.dll", "b.dll")
 
-	if got := names(flattenTree(roots)); !equal(got, []string{"a.dll", "b.dll"}) {
+	if got := names(flattenTree(roots, false)); !equal(got, []string{"a.dll", "b.dll"}) {
 		t.Fatalf("collapsed = %v", got)
 	}
 
 	roots[0].toggle(g.resolve)
 	want := []string{"a.dll", "  c.dll", "  d.dll", "b.dll"}
-	if got := names(flattenTree(roots)); !equal(got, want) {
+	if got := names(flattenTree(roots, false)); !equal(got, want) {
 		t.Errorf("expanded = %v, want %v", got, want)
 	}
 
 	roots[0].toggle(g.resolve)
-	if got := names(flattenTree(roots)); !equal(got, []string{"a.dll", "b.dll"}) {
+	if got := names(flattenTree(roots, false)); !equal(got, []string{"a.dll", "b.dll"}) {
 		t.Errorf("collapsed again = %v", got)
 	}
 }
@@ -204,13 +204,13 @@ func TestPrefixDrawsBranches(t *testing.T) {
 	roots := g.roots("root.exe", "a.dll", "b.dll")
 	roots[0].toggle(g.resolve)
 
-	if got := roots[0].prefix(); got != "" {
+	if got := roots[0].prefix(false); got != "" {
 		t.Errorf("top-level prefix = %q, want empty", got)
 	}
-	if got := roots[0].children[0].prefix(); got != "├─ " {
+	if got := roots[0].children[0].prefix(false); got != "├─ " {
 		t.Errorf("first child prefix = %q, want %q", got, "├─ ")
 	}
-	if got := roots[0].children[1].prefix(); got != "└─ " {
+	if got := roots[0].children[1].prefix(false); got != "└─ " {
 		t.Errorf("last child prefix = %q, want %q", got, "└─ ")
 	}
 }
@@ -221,7 +221,7 @@ func TestTreeText(t *testing.T) {
 	roots[0].toggle(g.resolve)
 
 	want := "a.dll\n  c.dll\nb.dll"
-	if got := treeText(flattenTree(roots)); got != want {
+	if got := treeText(flattenTree(roots, false)); got != want {
 		t.Errorf("treeText() = %q, want %q", got, want)
 	}
 }
@@ -231,7 +231,7 @@ func TestTreeText(t *testing.T) {
 func newTreeModel(g *fakeGraph, rootNames ...string) model {
 	m := model{mode: treeMode, width: 80, height: 12, resolve: g.resolve}
 	m.roots = g.roots("root.exe", rootNames...)
-	m.visible = flattenTree(m.roots)
+	m.visible = flattenTree(m.roots, false)
 	return m
 }
 

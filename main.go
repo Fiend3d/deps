@@ -23,6 +23,7 @@ func main() {
 	recursive := flag.Bool("r", false, "print recursive dependencies")
 	unresolvedOnly := flag.Bool("u", false, "print only unresolved dependencies (recursive)")
 	plain := flag.Bool("p", false, "print without color")
+	hideDelayed := flag.Bool("d", false, "hide delay-loaded dependencies")
 
 	flag.Parse()
 
@@ -41,6 +42,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  -r    print recursive dependencies\n")
 		fmt.Fprintf(os.Stderr, "  -u    print only unresolved dependencies (recursive)\n")
 		fmt.Fprintf(os.Stderr, "  -p    print without color\n")
+		fmt.Fprintf(os.Stderr, "  -d    hide delay-loaded dependencies\n")
 		os.Exit(1)
 	}
 
@@ -56,11 +58,11 @@ func main() {
 	// -u is a check rather than a listing: it stands alone and its findings
 	// decide the exit status.
 	if *unresolvedOnly {
-		os.Exit(printUnresolved(filePath))
+		os.Exit(printUnresolved(filePath, *hideDelayed))
 	}
 
 	if *imports || *exports || *recursive {
-		printPE(filePath, *imports, *exports, *recursive)
+		printPE(filePath, *imports, *exports, *recursive, *hideDelayed)
 		return
 	}
 
@@ -71,6 +73,7 @@ func main() {
 	if m.loadErr != "" {
 		log.Fatal(m.loadErr)
 	}
+	m.setHideDelayed(*hideDelayed)
 
 	p := tea.NewProgram(m)
 
