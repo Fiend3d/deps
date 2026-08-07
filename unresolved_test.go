@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/colorprofile"
 )
 
@@ -232,5 +233,173 @@ func TestPrintUnresolvedReportShape(t *testing.T) {
 
 	if got := buf.String(); got != want {
 		t.Errorf("report:\n%q\nwant:\n%q", got, want)
+	}
+}
+
+func TestUnresolvedText(t *testing.T) {
+	missing := []unresolved{
+		{name: "AzureAttestManager.dll", importers: []string{"DMCmnUtils.dll"}},
+		{name: "broken.dll", importers: []string{"a.dll", "b.dll"}, hard: true},
+	}
+
+	want := strings.Join([]string{
+		"AzureAttestManager.dll (delay)  <- DMCmnUtils.dll",
+		"broken.dll                      <- a.dll, b.dll",
+		"",
+	}, "\n")
+
+	if got := unresolvedText(missing); got != want {
+		t.Errorf("unresolvedText():\n%q\nwant:\n%q", got, want)
+	}
+}
+
+// newUnresolvedModel wires a model to a fake graph the way initModel wires one
+// to the real resolver, with the named modules as the root's imports.
+func newUnresolvedModel(g *fakeGraph, deps ...dependency) model {
+	m := model{
+		mode:     importMode,
+		filePath: "root.exe",
+		width:    80,
+		height:   12,
+		resolve:  g.resolve,
+	}
+	for _, dep := range deps {
+		m.imports = append(m.imports, &importItem{dependency: dep})
+	}
+	m.refreshImports()
+	return m
+}
+
+func pressU(t *testing.T, m model) model {
+	t.Helper()
+	next, _ := m.Update(tea.KeyPressMsg{Code: 'u', Text: "u"})
+	got, ok := next.(model)
+	if !ok {
+		t.Fatalf("Update returned %T, want model", next)
+	}
+	return got
+}
+
+// u is a toggle: into the findings and straight back to the import list.
+func TestUKeyTogglesUnresolvedMode(t *testing.T) {
+	g := newFakeGraph(nil)
+	g.deps["a.dll"] = []dependency{missingDep("gone.dll")}
+
+	m := pressU(t, newUnresolvedModel(g, foundDep("a.dll")))
+
+	if m.mode != unresolvedMode {
+		t.Fatalf("mode = %d after u, want unresolvedMode", m.mode)
+	}
+	if m.length() != 1 || m.visibleMissing[0].name != "gone.dll" {
+		t.Errorf("visibleMissing = %+v, want just gone.dll", m.visibleMissing)
+	}
+
+	if back := pressU(t, m); back.mode != importMode {
+		t.Errorf("mode = %d after a second u, want importMode", back.mode)
+	}
+}
+
+// The walk resolves the whole graph, so it must happen once and be cached —
+// this is the only place the TUI blocks.
+func TestUKeyScansOnlyOnce(t *testing.T) {
+	g := newFakeGraph(map[string][]string{"a.dll": {"b.dll"}})
+	g.deps["b.dll"] = []dependency{missingDep("gone.dll")}
+
+	m := pressU(t, newUnresolvedModel(g, foundDep("a.dll")))
+	if m.length() != 1 {
+		t.Fatalf("length() = %d after the first scan, want 1", m.length())
+	}
+
+	calls := g.calls["a.dll"]
+	if calls == 0 {
+		t.Fatal("the first u did not walk the graph")
+	}
+
+	// Out of the mode and back in.
+	m = pressU(t, pressU(t, m))
+
+	if g.calls["a.dll"] != calls {
+		t.Errorf("a.dll resolved %d times, want %d: the scan was not cached",
+			g.calls["a.dll"], calls)
+	}
+	if m.length() != 1 {
+		t.Errorf("length() = %d on the second visit, want the cached 1", m.length())
+	}
+}
+
+// A file that failed to load has no resolver; u must not walk with it.
+func TestUKeyOnUnloadableFile(t *testing.T) {
+	m := model{mode: importMode, width: 80, height: 12, loadErr: "failed to parse PE"}
+
+	got := pressU(t, m)
+
+	if got.scanned {
+		t.Error("scanned a file that never loaded")
+	}
+	if got.length() != 0 {
+		t.Errorf("length() = %d, want 0", got.length())
+	}
+	if !strings.Contains(got.View().Content, "failed to parse PE") {
+		t.Error("the body should show the load failure")
+	}
+}
+
+// d in the unresolved view drops the findings no importer needs at load time,
+// exactly as -u -d does.
+func TestDKeyFiltersFindings(t *testing.T) {
+	g := newFakeGraph(nil)
+	g.deps["a.dll"] = []dependency{missingDep("hard.dll"), delayedDep("soft.dll")}
+
+	m := pressU(t, newUnresolvedModel(g, foundDep("a.dll")))
+	if m.length() != 2 {
+		t.Fatalf("length() = %d, want both findings", m.length())
+	}
+
+	next, _ := m.Update(tea.KeyPressMsg{Code: 'd', Text: "d"})
+	hidden := next.(model)
+
+	if hidden.length() != 1 || hidden.visibleMissing[0].name != "hard.dll" {
+		t.Errorf("visibleMissing = %+v, want just hard.dll", hidden.visibleMissing)
+	}
+	// The walk's own findings must survive the filter, or unhiding cannot
+	// restore them and hard would have been decided on a pruned graph.
+	if len(hidden.missing) != 2 {
+		t.Errorf("missing = %+v, want the filter to leave the findings alone", hidden.missing)
+	}
+	if !strings.Contains(hidden.View().Content, "-delay") {
+		t.Error("the header does not show the filter is on")
+	}
+
+	back, _ := hidden.Update(tea.KeyPressMsg{Code: 'd', Text: "d"})
+	if got := back.(model); got.length() != 2 {
+		t.Errorf("length() = %d after unhiding, want 2", got.length())
+	}
+}
+
+func TestUnresolvedModeRendersWithoutPanic(t *testing.T) {
+	g := newFakeGraph(nil)
+	g.deps["a.dll"] = []dependency{missingDep("gone.dll"), delayedDep("other.dll")}
+
+	m := pressU(t, newUnresolvedModel(g, foundDep("a.dll")))
+	m.filePath = `C:\app\app.exe`
+
+	for _, size := range []struct{ width, height int }{{0, 0}, {3, 3}, {20, 10}, {200, 60}} {
+		m.width, m.height = size.width, size.height
+		m.updateStart()
+
+		view := m.View() // must not panic
+
+		if size.height >= 3 {
+			if got, want := strings.Count(view.Content, "\n"), size.height-1; got != want {
+				t.Errorf("at %dx%d: %d newlines, want %d", size.width, size.height, got, want)
+			}
+		}
+	}
+
+	// And with nothing to report.
+	empty := pressU(t, newUnresolvedModel(newFakeGraph(nil), foundDep("a.dll")))
+	empty.width, empty.height = 80, 12
+	if got := empty.View().Content; !strings.Contains(got, "No unresolved dependencies") {
+		t.Errorf("empty body:\n%s", got)
 	}
 }

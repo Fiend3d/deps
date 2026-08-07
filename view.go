@@ -97,6 +97,46 @@ func (m *model) renderTreeRow(node *treeNode, current bool) string {
 	return line + " " + rightStyle.Render(truncate(filepath.Dir(node.dep.path), rightSize))
 }
 
+// renderUnresolvedRow draws one finding: cursor, the module name coloured by
+// whether it is missing at load time, and the modules importing it right-aligned
+// when there is room — the printed report's line, windowed to fit.
+func (m *model) renderUnresolvedRow(hit unresolved, current bool) string {
+	style := lg.NewStyle()
+
+	line := "   "
+	if current {
+		line = " > "
+	}
+
+	// Red is a module the image needs to start; yellow only fails if the
+	// delay-loaded path is ever called. Same split as the printed report.
+	var colour ansi.BasicColor
+	if hit.hard {
+		colour = lg.Red
+		if current {
+			colour = lg.BrightRed
+		}
+	} else {
+		colour = lg.Yellow
+		if current {
+			colour = lg.BrightYellow
+		}
+	}
+	line += style.Foreground(colour).Render(hit.label())
+
+	// Drop the importer column rather than asking for a negative width.
+	rightSize := m.width - lg.Width(line) - 1
+	if rightSize <= 0 {
+		return line
+	}
+	rightStyle := style.Width(rightSize).Align(lg.Right)
+	if !current {
+		rightStyle = rightStyle.Foreground(lg.BrightBlack)
+	}
+
+	return line + " " + rightStyle.Render(truncate("<- "+hit.importerList(), rightSize))
+}
+
 func (m model) View() tea.View {
 	var result tea.View
 	result.AltScreen = true
@@ -109,6 +149,8 @@ func (m model) View() tea.View {
 		result.WindowTitle = "Deps - Export"
 	case treeMode:
 		result.WindowTitle = "Deps - Tree"
+	case unresolvedMode:
+		result.WindowTitle = "Deps - Unresolved"
 	}
 
 	var s strings.Builder
@@ -130,6 +172,9 @@ func (m model) View() tea.View {
 		header += m.counter(len(m.exports))
 	case treeMode:
 		header += style.Foreground(lg.BrightMagenta).Render(" TREE ")
+		header += m.counter(length)
+	case unresolvedMode:
+		header += style.Foreground(lg.BrightRed).Render(" UNRESOLVED ")
 		header += m.counter(length)
 	}
 
@@ -237,6 +282,26 @@ func (m model) View() tea.View {
 				lineCount++
 			}
 		}
+	case unresolvedMode:
+		if length == 0 {
+			s.WriteString(truncate(m.emptyBody("No unresolved dependencies"), m.width))
+			s.WriteRune('\n')
+			lineCount++
+		} else {
+			for i := range length {
+				if i+1 > m.height-2 || i+m.start >= length {
+					break
+				}
+
+				index := i + m.start
+				s.WriteString(truncate(
+					m.renderUnresolvedRow(m.visibleMissing[index], index == m.cursor),
+					m.width,
+				))
+				s.WriteRune('\n')
+				lineCount++
+			}
+		}
 	case exportMode:
 		if length == 0 {
 			s.WriteString(truncate(m.emptyBody("No exports"), m.width))
@@ -317,6 +382,15 @@ func (m model) View() tea.View {
 			help += "Enter"
 			help += style.Foreground(lg.BrightBlue).Render(" - Open ")
 		}
+		help += "u"
+		help += style.Foreground(lg.BrightBlue).Render(" - UNRESOLVED ")
+		help += "d" + style.Foreground(lg.BrightBlue).Render(m.delayedHelp())
+
+	case unresolvedMode:
+		help += "u"
+		help += style.Foreground(lg.BrightBlue).Render(" - IMPORT ")
+		help += "r"
+		help += style.Foreground(lg.BrightBlue).Render(" - TREE ")
 		help += "d" + style.Foreground(lg.BrightBlue).Render(m.delayedHelp())
 
 	case importMode:
@@ -324,6 +398,8 @@ func (m model) View() tea.View {
 		help += style.Foreground(lg.BrightBlue).Render(" - EXPORT ")
 		help += "r"
 		help += style.Foreground(lg.BrightBlue).Render(" - TREE ")
+		help += "u"
+		help += style.Foreground(lg.BrightBlue).Render(" - UNRESOLVED ")
 
 		if length > 0 {
 			item := m.visibleImports[mappedCursor]
@@ -365,6 +441,12 @@ func (m model) View() tea.View {
 				help += "f"
 				help += style.Foreground(lg.BrightBlue).Render(" - Functions")
 			}
+			help += "] "
+
+		case unresolvedMode:
+			// No path and no functions to copy: the module resolved to nothing.
+			help += "c"
+			help += style.Foreground(lg.BrightBlue).Render(" - Selected")
 			help += "] "
 
 		case exportMode:

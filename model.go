@@ -12,6 +12,7 @@ const (
 	importMode mode = iota
 	exportMode
 	treeMode
+	unresolvedMode
 )
 
 // importItem is one row of the flat import list: a resolved dependency plus the
@@ -74,6 +75,14 @@ type model struct {
 	roots   []*treeNode
 	visible []*treeNode
 
+	// missing holds every finding of the full-depth walk; visibleMissing is the
+	// filtered view the list shows, the same split as the two pairs above. The
+	// walk resolves the whole graph, so unlike the lazy tree it cannot run up
+	// front: it runs on the first press of u, and scanned records that it has.
+	missing        []unresolved
+	visibleMissing []unresolved
+	scanned        bool
+
 	// search is the loader search path for this walk; resolve turns a module
 	// path into its dependencies, and is swapped out in tests.
 	search  *searchPath
@@ -113,6 +122,8 @@ func (m *model) length() int {
 		return len(m.exports)
 	case treeMode:
 		return len(m.visible)
+	case unresolvedMode:
+		return len(m.visibleMissing)
 	}
 	return 0
 }
@@ -178,12 +189,43 @@ func (m *model) refreshImports() {
 	m.clampCursor()
 }
 
-// setHideDelayed applies the filter and rebuilds both dependency views, so the
+// refreshMissing rebuilds the filtered findings list, the unresolved view's
+// counterpart to refreshVisible and refreshImports. Filtering the findings
+// rather than the walk is deliberate — see filterDelayedFindings.
+func (m *model) refreshMissing() {
+	m.visibleMissing = filterDelayedFindings(m.missing, m.hideDelayed)
+	m.clampCursor()
+}
+
+// setHideDelayed applies the filter and rebuilds every dependency view, so the
 // flag, the key and navigation all go through one place.
 func (m *model) setHideDelayed(hide bool) {
 	m.hideDelayed = hide
 	m.refreshImports()
 	m.refreshVisible()
+	m.refreshMissing()
+}
+
+// scanUnresolved walks the graph to full depth and caches the findings. It is
+// the one blocking operation in the TUI, so it runs at most once per image —
+// every other view is either already in memory or resolved lazily one node at a
+// time.
+func (m *model) scanUnresolved() {
+	// A file we could not read has no resolver to walk with.
+	if m.scanned || m.loadErr != "" {
+		return
+	}
+	m.scanned = true
+
+	// The unfiltered imports: hard is decided by seeing every edge to a module,
+	// so the delay filter belongs after the walk, not before it.
+	deps := make([]dependency, 0, len(m.imports))
+	for _, item := range m.imports {
+		deps = append(deps, item.dependency)
+	}
+
+	m.missing = unresolvedDeps(m.filePath, deps, m.resolve)
+	m.refreshMissing()
 }
 
 // toggleNode opens or closes the node under the cursor, resolving its children
@@ -384,6 +426,11 @@ func (m *model) right() (tea.Model, tea.Cmd) {
 	// Keep exploring the way the user already was.
 	newModel.mode = m.mode
 	newModel.setHideDelayed(m.hideDelayed)
+	// The findings are per-image, so the cache does not carry over: descending
+	// while in the unresolved view has to walk the module we landed on.
+	if newModel.mode == unresolvedMode {
+		newModel.scanUnresolved()
+	}
 	return newModel, nil
 }
 

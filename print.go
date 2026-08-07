@@ -146,11 +146,7 @@ func filterDelayedFindings(missing []unresolved, hide bool) []unresolved {
 func writeUnresolvedReport(missing []unresolved) int {
 	style := lg.NewStyle()
 
-	// Line up the arrows on the widest label.
-	width := 0
-	for _, hit := range missing {
-		width = max(width, len(hit.label()))
-	}
+	width := labelWidth(missing)
 
 	exit := 0
 	for _, hit := range missing {

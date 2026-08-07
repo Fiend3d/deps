@@ -96,6 +96,27 @@ func unresolvedDeps(rootPath string, deps []dependency, resolve resolver) []unre
 	return result
 }
 
+// labelWidth is the width the arrows line up on: the widest label in the set.
+func labelWidth(missing []unresolved) int {
+	width := 0
+	for _, hit := range missing {
+		width = max(width, len(hit.label()))
+	}
+	return width
+}
+
+// unresolvedText renders the findings as plain text for the clipboard, the
+// counterpart of treeText. It is the printed report without the colour.
+func unresolvedText(missing []unresolved) string {
+	width := labelWidth(missing)
+
+	var s strings.Builder
+	for _, hit := range missing {
+		fmt.Fprintf(&s, "%-*s  <- %s\n", width, hit.label(), hit.importerList())
+	}
+	return s.String()
+}
+
 // importerList names the modules that import a finding, keeping the line short
 // when many of them do.
 func (u unresolved) importerList() string {

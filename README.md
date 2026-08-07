@@ -40,6 +40,11 @@ by design and the loader resolves them through its schema.
 
 `-u` stands alone and ignores `-i`/`-e`/`-r`; `-p` and `-d` still apply.
 
+The same report is on `u` in the TUI, with the importers on the right of each
+row. Unlike the tree, which resolves a node at a time as you open it, this walks
+the whole graph at once — the first press can take a moment on a large image,
+and the result is kept for as long as you stay on that file.
+
 ## Hiding delay-loaded modules
 
 A delay-loaded import binds on the first call into it rather than at process
@@ -65,6 +70,7 @@ are being withheld.
 | --- | --- |
 | `Tab` | switch between imports and exports |
 | `r` | recursive dependency tree |
+| `u` | unresolved dependencies (recursive) |
 | `Space` | expand / collapse |
 | `Enter` | open the selected module |
 | `h` / `left` | back (in the tree: collapse, or jump to the parent) |

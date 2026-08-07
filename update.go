@@ -78,9 +78,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.start = 0
 			return m, nil
 
+		case "u":
+			switch m.mode {
+			case unresolvedMode:
+				m.mode = importMode
+			default:
+				m.mode = unresolvedMode
+				// Blocks the first time on a large image; cached after that.
+				m.scanUnresolved()
+			}
+			m.cursor = 0
+			m.start = 0
+			return m, nil
+
 		case "d":
 			switch m.mode {
-			case importMode, treeMode:
+			case importMode, treeMode, unresolvedMode:
 				m.setHideDelayed(!m.hideDelayed)
 			}
 			return m, nil
@@ -145,6 +158,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				item := m.exports[mappedCursor]
 				m.copy("export", item.String())
 				return m, nil
+			case unresolvedMode:
+				m.copy("name", m.visibleMissing[m.cursor].name)
+				return m, nil
 			}
 
 		case "p":
@@ -179,6 +195,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.copy("all exports", strings.Join(names, "\n"))
 			case treeMode:
 				m.copy("tree", treeText(m.visible))
+			case unresolvedMode:
+				m.copy("unresolved", unresolvedText(m.visibleMissing))
 			}
 
 		case "f":
