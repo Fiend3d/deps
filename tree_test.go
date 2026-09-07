@@ -229,7 +229,7 @@ func TestTreeText(t *testing.T) {
 // newTreeModel wires a model to a fake graph, as initModel would to the real
 // resolver.
 func newTreeModel(g *fakeGraph, rootNames ...string) model {
-	m := model{mode: treeMode, width: 80, height: 12, resolve: g.resolve}
+	m := model{mode: treeMode, resolve: g.resolve}
 	m.roots = g.roots("root.exe", rootNames...)
 	m.visible = flattenTree(m.roots, false)
 	return m
@@ -323,14 +323,11 @@ func TestTreeModeRendersWithoutPanic(t *testing.T) {
 	m.filePath = `C:\app\app.exe`
 
 	for _, size := range []struct{ width, height int }{{0, 0}, {3, 3}, {20, 10}, {200, 60}} {
-		m.width, m.height = size.width, size.height
-		m.updateStart()
+		got := renderString(&m, size.width, size.height) // must not panic
 
-		view := m.View() // must not panic
-
-		if size.height >= 3 {
-			if got, want := strings.Count(view.Content, "\n"), size.height-1; got != want {
-				t.Errorf("at %dx%d: %d newlines, want %d", size.width, size.height, got, want)
+		if size.height > 0 {
+			if n, want := strings.Count(got, "\n"), size.height-1; n != want {
+				t.Errorf("at %dx%d: %d newlines, want %d", size.width, size.height, n, want)
 			}
 		}
 	}

@@ -6,31 +6,27 @@ import (
 	"os"
 	"strings"
 	"testing"
-
-	lg "charm.land/lipgloss/v2"
-	"github.com/charmbracelet/colorprofile"
 )
 
 // captureOut redirects printed output into a buffer for the duration of a test,
-// with colour forced on so the stripping under test is the only thing acting.
-func captureOut(t *testing.T, profile colorprofile.Profile) *bytes.Buffer {
+// with colour set either way so what paint does is the only thing acting.
+func captureOut(t *testing.T, colour bool) *bytes.Buffer {
 	t.Helper()
 
 	var buf bytes.Buffer
-	saved := out
-	out = &colorprofile.Writer{Forward: &buf, Profile: profile}
-	t.Cleanup(func() { out = saved })
+	savedOut, savedColour := out, colourOn
+	out, colourOn = &buf, colour
+	t.Cleanup(func() { out, colourOn = savedOut, savedColour })
 
 	return &buf
 }
 
-// A NoTTY profile must remove every escape sequence, not merely the colours.
-func TestPlainOutputStripsEscapes(t *testing.T) {
-	buf := captureOut(t, colorprofile.NoTTY)
+// With colour off, nothing may reach the output but the text itself.
+func TestPlainOutputHasNoEscapes(t *testing.T) {
+	buf := captureOut(t, false)
 
-	style := lg.NewStyle()
-	fmt.Fprintln(out, style.Foreground(lg.Green).Render("GDI32.dll"))
-	fmt.Fprintln(out, style.Foreground(lg.Red).Render("missing.dll"))
+	fmt.Fprintln(out, paint(fgGreen, "GDI32.dll"))
+	fmt.Fprintln(out, paint(fgRed, "missing.dll"))
 
 	got := buf.String()
 	if strings.ContainsRune(got, '\x1b') {
@@ -42,12 +38,12 @@ func TestPlainOutputStripsEscapes(t *testing.T) {
 }
 
 func TestColouredOutputKeepsEscapes(t *testing.T) {
-	buf := captureOut(t, colorprofile.TrueColor)
+	buf := captureOut(t, true)
 
-	fmt.Fprintln(out, lg.NewStyle().Foreground(lg.Green).Render("GDI32.dll"))
+	fmt.Fprintln(out, paint(fgGreen, "GDI32.dll"))
 
 	if !strings.ContainsRune(buf.String(), '\x1b') {
-		t.Error("a colour-capable profile should keep the escape sequences")
+		t.Error("colour should be written as escape sequences")
 	}
 }
 
@@ -77,7 +73,7 @@ func TestNoColorEnv(t *testing.T) {
 				os.Unsetenv("NO_COLOR")
 			}
 
-			got := newOutput().Profile == colorprofile.NoTTY
+			got := !detectColour()
 			if got != tt.wantPlain {
 				t.Errorf("plain = %v, want %v", got, tt.wantPlain)
 			}
@@ -86,7 +82,7 @@ func TestNoColorEnv(t *testing.T) {
 }
 
 func TestPrintTree(t *testing.T) {
-	buf := captureOut(t, colorprofile.NoTTY)
+	buf := captureOut(t, false)
 
 	g := newFakeGraph(map[string][]string{
 		"a.dll": {"c.dll"},
@@ -98,7 +94,7 @@ func TestPrintTree(t *testing.T) {
 		{name: "b.dll", path: "b.dll", found: true},
 	}
 
-	printTree("root.exe", deps, g.resolve, lg.NewStyle(), false)
+	printTree("root.exe", deps, g.resolve, false)
 
 	want := strings.Join([]string{
 		"├─ a.dll",
@@ -115,7 +111,7 @@ func TestPrintTree(t *testing.T) {
 
 // An unreadable module is reported in place and does not stop the walk.
 func TestPrintTreeMarksUnreadable(t *testing.T) {
-	buf := captureOut(t, colorprofile.NoTTY)
+	buf := captureOut(t, false)
 
 	g := newFakeGraph(map[string][]string{"a.dll": {}, "b.dll": {}})
 	g.fail["a.dll"] = true
@@ -123,7 +119,7 @@ func TestPrintTreeMarksUnreadable(t *testing.T) {
 	printTree("root.exe", []dependency{
 		{name: "a.dll", path: "a.dll", found: true},
 		{name: "b.dll", path: "b.dll", found: true},
-	}, g.resolve, lg.NewStyle(), false)
+	}, g.resolve, false)
 
 	got := buf.String()
 	if !strings.Contains(got, "a.dll (unreadable)") {

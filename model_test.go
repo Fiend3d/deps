@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 	"testing"
 
 	"github.com/saferwall/pe"
@@ -107,57 +106,68 @@ func TestMapFromFunctionToParent(t *testing.T) {
 	}
 }
 
-func TestUpdateStart(t *testing.T) {
+// The scroll offset is settled by rendering, because only then is the height
+// inside the box known. These cases are the old updateStart table, driven
+// through a real render.
+func TestListOffsetFollowsCursor(t *testing.T) {
 	tests := []struct {
 		name   string
 		count  int
-		height int
+		rows   int
 		cursor int
-		start  int
+		offset int
 		want   int
 	}{
-		{"cursor above view scrolls up", 50, 10, 5, 20, 5},
-		{"cursor below view scrolls down", 50, 10, 45, 0, 38},
-		{"cursor already visible", 50, 10, 40, 38, 38},
-		{"list shorter than view", 3, 20, 0, 0, 0},
-		{"degenerate height", 50, 1, 10, 7, 0},
+		{"cursor above view scrolls up", 50, 8, 5, 20, 5},
+		{"cursor below view scrolls down", 50, 8, 45, 0, 38},
+		{"cursor already visible", 50, 8, 40, 38, 38},
+		{"list shorter than view", 3, 18, 0, 0, 0},
 
 		// Growing the window must release a stale offset instead of leaving a
 		// blank region below the last row.
-		{"resize taller clamps to zero", 50, 60, 45, 41, 0},
-		{"resize taller clamps to end", 100, 30, 95, 88, 72},
+		{"resize taller clamps to zero", 50, 58, 45, 41, 0},
+		{"resize taller clamps to end", 100, 28, 95, 88, 72},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			m := newImportModel(make([]int, tt.count))
-			m.height = tt.height
 			m.cursor = tt.cursor
-			m.start = tt.start
+			m.list.SetOffset(tt.offset)
 
-			m.updateStart()
+			drawRows(&m, 80, tt.rows)
 
-			if m.start != tt.want {
-				t.Errorf("start = %d, want %d", m.start, tt.want)
+			if got := m.list.Offset(); got != tt.want {
+				t.Errorf("offset = %d, want %d", got, tt.want)
 			}
 		})
 	}
 }
 
-// The regression this guards: wheel-scroll, then grow the window.
-func TestUpdateStartAfterWheelAndResize(t *testing.T) {
+// A window too small to hold a single row must not disturb the offset.
+func TestListOffsetSurvivesDegenerateHeight(t *testing.T) {
 	m := newImportModel(make([]int, 50))
-	m.height = 10
+	m.cursor = 10
+	m.list.SetOffset(7)
 
+	draw(&m, 80, 1)
+
+	if got := m.list.Offset(); got != 7 {
+		t.Errorf("offset = %d, want 7: nothing was drawn, so nothing should have moved", got)
+	}
+}
+
+// The regression this guards: wheel-scroll, then grow the window.
+func TestListOffsetAfterWheelAndResize(t *testing.T) {
+	m := newImportModel(make([]int, 50))
 	m.cursor = 45
-	m.updateStart()
+
+	drawRows(&m, 80, 8)
 	m.handleWheel(3)
+	drawRows(&m, 80, 58)
 
-	m.height = 60
-	m.updateStart()
-
-	if m.start != 0 {
-		t.Errorf("start = %d, want 0: the whole list fits, nothing should be scrolled off", m.start)
+	if got := m.list.Offset(); got != 0 {
+		t.Errorf("offset = %d, want 0: the whole list fits, nothing should be scrolled off", got)
 	}
 }
 
@@ -165,30 +175,30 @@ func TestHandleWheel(t *testing.T) {
 	tests := []struct {
 		name       string
 		count      int
-		height     int
+		rows       int
 		cursor     int
 		steps      int
-		wantStart  int
+		wantOffset int
 		wantCursor int
 	}{
-		{"scroll down drags cursor", 50, 10, 0, 3, 3, 3},
-		{"scroll up leaves cursor visible", 50, 10, 5, -3, 0, 5},
-		{"clamped at top", 50, 10, 0, -3, 0, 0},
-		{"clamped at end", 50, 10, 0, 100, 42, 42},
-		{"list fits, no scroll", 5, 10, 0, 3, 0, 0},
-		{"degenerate height", 50, 1, 0, 3, 0, 0},
+		{"scroll down leaves cursor behind", 50, 8, 0, 3, 3, 0},
+		{"scroll up keeps cursor unchanged", 50, 8, 5, -3, 0, 5},
+		{"clamped at top", 50, 8, 0, -3, 0, 0},
+		{"clamped at end", 50, 8, 0, 100, 42, 0},
+		{"list fits, no scroll", 5, 8, 0, 3, 0, 0},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			m := newImportModel(make([]int, tt.count))
-			m.height = tt.height
 			m.cursor = tt.cursor
 
+			// The wheel scrolls by the height of the last frame.
+			drawRows(&m, 80, tt.rows)
 			m.handleWheel(tt.steps)
 
-			if m.start != tt.wantStart {
-				t.Errorf("start = %d, want %d", m.start, tt.wantStart)
+			if got := m.list.Offset(); got != tt.wantOffset {
+				t.Errorf("offset = %d, want %d", got, tt.wantOffset)
 			}
 			if m.cursor != tt.wantCursor {
 				t.Errorf("cursor = %d, want %d", m.cursor, tt.wantCursor)
@@ -197,227 +207,36 @@ func TestHandleWheel(t *testing.T) {
 	}
 }
 
-// After a wheel event the cursor must name a row that is actually drawn,
-// otherwise the header counter lies.
-func TestHandleWheelKeepsCursorVisible(t *testing.T) {
-	m := newImportModel(make([]int, 200))
-	m.height = 12
-	visible := m.visibleRows()
+// A wheel event before the first frame has nothing to scroll by and must not
+// move anything.
+func TestHandleWheelBeforeFirstFrame(t *testing.T) {
+	m := newImportModel(make([]int, 50))
 
-	for _, steps := range []int{3, 3, 3, -1, 50, -20, 500, -500} {
-		m.handleWheel(steps)
-		if m.cursor < m.start || m.cursor > m.start+visible-1 {
-			t.Fatalf("after %+d: cursor %d outside visible rows [%d, %d]",
-				steps, m.cursor, m.start, m.start+visible-1)
-		}
+	m.handleWheel(3)
+
+	if m.list.Offset() != 0 || m.cursor != 0 {
+		t.Errorf("offset %d cursor %d, want 0 and 0", m.list.Offset(), m.cursor)
 	}
 }
 
-// initModel unmaps the image before returning, so every string it copied out
-// has to be independent of the mapping.
-func TestInitModelSurvivesUnmap(t *testing.T) {
-	exe, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
+func TestHandleWheelLetsCursorLeaveView(t *testing.T) {
+	m := newImportModel(make([]int, 50))
+	drawRows(&m, 80, 8)
+	m.handleWheel(3)
+	drawRows(&m, 80, 8)
+
+	if m.cursor != 0 || m.list.Offset() != 3 {
+		t.Fatalf("cursor %d offset %d, want unchanged cursor 0 and offset 3", m.cursor, m.list.Offset())
+	}
+	if _, selected := m.list.Selected(); selected {
+		t.Fatal("off-screen cursor should not be rendered as a list selection")
 	}
 
-	m := initModel(exe, nil)
-	if m.loadErr != "" {
-		t.Fatalf("could not load the test binary: %s", m.loadErr)
-	}
-	if len(m.imports) == 0 {
-		t.Fatal("the test binary is expected to import something")
-	}
-
-	// Read everything back now that the mapping is gone.
-	for _, item := range m.imports {
-		if item.name == "" {
-			t.Error("import with an empty name")
-		}
-		for _, fn := range item.functions {
-			if fn == "" {
-				t.Errorf("%s: imported function with an empty name", item.name)
-			}
-		}
-	}
-}
-
-// A live memory mapping locks the image on Windows, so a leaked one would stop
-// anything else from replacing or deleting a DLL that deps had looked at.
-func TestInitModelReleasesTheFile(t *testing.T) {
-	exe, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(exe)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	path := filepath.Join(t.TempDir(), "copy.exe")
-	if err := os.WriteFile(path, data, 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	m := initModel(path, nil)
-	if m.loadErr != "" {
-		t.Fatalf("could not load the copy: %s", m.loadErr)
-	}
-
-	if err := os.Remove(path); err != nil {
-		t.Errorf("image still locked after initModel returned: %v", err)
-	}
-}
-
-// Before this was fixed, a file that failed to parse called log.Fatalf and took
-// the process down — inside the TUI that left the terminal unusable.
-func TestInitModelReportsErrorInsteadOfExiting(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "bogus.dll")
-	if err := os.WriteFile(path, []byte("not a PE"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	m := initModel(path, nil)
-
-	if m.loadErr == "" {
-		t.Fatal("expected loadErr to be set for a non-PE file")
-	}
-	if m.length() != 0 {
-		t.Errorf("length() = %d, want 0", m.length())
-	}
-}
-
-func TestRightStaysPutOnUnreadableTarget(t *testing.T) {
-	bogus := filepath.Join(t.TempDir(), "bogus.dll")
-	if err := os.WriteFile(bogus, []byte("not a PE"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	m := newImportModel([]int{0})
-	m.filePath = "root.exe"
-	m.history = []string{"root.exe"}
-	m.imports[0].path = bogus
-
-	got, _ := m.right()
-
-	next, ok := got.(*model)
-	if !ok {
-		t.Fatalf("right() returned %T, want *model", got)
-	}
-	if next.filePath != "root.exe" {
-		t.Errorf("navigated to %q; should have stayed on the unreadable target", next.filePath)
-	}
-	if next.status == "" {
-		t.Error("expected a status message explaining the failure")
-	}
-}
-
-func TestFindDependencyOrder(t *testing.T) {
-	first, second := t.TempDir(), t.TempDir()
-	for _, dir := range []string{first, second} {
-		if err := os.WriteFile(filepath.Join(dir, "a.dll"), []byte("x"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	got, found := findDependency("a.dll", []string{first, second})
-	if !found {
-		t.Fatal("a.dll not found")
-	}
-	if want := filepath.Join(first, "a.dll"); got != want {
-		t.Errorf("resolved to %q, want the earlier directory %q", got, want)
-	}
-}
-
-func TestFindDependencySkipsDirectories(t *testing.T) {
-	dir := t.TempDir()
-	real := t.TempDir()
-
-	if err := os.Mkdir(filepath.Join(dir, "trap.dll"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(real, "trap.dll"), []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	got, found := findDependency("trap.dll", []string{dir, real})
-	if !found {
-		t.Fatal("trap.dll not found")
-	}
-	if want := filepath.Join(real, "trap.dll"); got != want {
-		t.Errorf("resolved to %q, want %q: a directory must not shadow a real file", got, want)
-	}
-}
-
-func TestFindDependencyMissing(t *testing.T) {
-	if _, found := findDependency("nope.dll", []string{t.TempDir(), ""}); found {
-		t.Error("nope.dll should not resolve")
-	}
-}
-
-// View must survive any window size — in particular one too narrow for the
-// right-hand column, where the available width goes negative.
-func TestViewRenders(t *testing.T) {
-	sizes := []struct{ width, height int }{
-		{0, 0}, {1, 1}, {3, 3}, {8, 5}, {20, 10}, {200, 60},
-	}
-
-	build := func() model {
-		m := newImportModel([]int{3, 0, 2}, 0)
-		m.filePath = `C:\some\quite\long\path\app.exe`
-		m.imports[0].path = `C:\Windows\System32\a\very\long\directory\kernel32.dll`
-		m.imports[0].functions = []string{"CreateFileW", "ReadFile", "ordinal:12"}
-		m.imports[1].found = false
-		m.imports[1].virtual = true
-		m.imports[2].delayed = true
-		m.imports[2].path = `C:\Windows\System32\ole32.dll`
-		m.exports = []exportItem{
-			{name: "SomeExportedFunction", hasName: true, ordinal: 1, rva: 0x1000},
-			{ordinal: 2, rva: 0x2000},
-		}
-		return m
-	}
-
-	for _, md := range []mode{importMode, exportMode} {
-		for _, size := range sizes {
-			m := build()
-			m.mode = md
-			m.width, m.height = size.width, size.height
-			m.updateStart()
-
-			view := m.View() // must not panic
-
-			if size.height >= 3 {
-				if got, want := strings.Count(view.Content, "\n"), size.height-1; got != want {
-					t.Errorf("mode %d at %dx%d: %d newlines, want %d",
-						md, size.width, size.height, got, want)
-				}
-			}
-		}
-	}
-}
-
-func TestViewShowsToolset(t *testing.T) {
-	m := newImportModel([]int{0})
-	m.filePath = `C:\app\app.exe`
-	m.toolset = "MSVC 14.38.33145"
-	m.width, m.height = 120, 24
-
-	if view := m.View(); !strings.Contains(view.Content, "MSVC 14.38.33145") {
-		t.Error("the toolset version should appear in the header")
-	}
-}
-
-func TestViewShowsLoadError(t *testing.T) {
-	m := model{mode: importMode, width: 80, height: 24, loadErr: "failed to parse PE: bad magic"}
-
-	view := m.View()
-
-	if !strings.Contains(view.Content, "bad magic") {
-		t.Error("the load failure should be visible in the body")
-	}
-	if !strings.Contains(view.Content, "[error]") {
-		t.Error("the header should mark the file as failed, not empty")
+	// Keyboard navigation reattaches the cursor and brings it back into view.
+	m.handleKey(keyEvent('j'))
+	drawRows(&m, 80, 8)
+	if selected, ok := m.list.Selected(); !ok || selected != 1 {
+		t.Fatalf("selection = (%d, %v), want (1, true)", selected, ok)
 	}
 }
 

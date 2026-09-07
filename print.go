@@ -3,47 +3,19 @@ package main
 import (
 	"fmt"
 	"log"
-	"os"
 	"strings"
-
-	lg "charm.land/lipgloss/v2"
-	"github.com/charmbracelet/colorprofile"
 )
 
-// out receives every printed line. A NoTTY profile strips escape sequences
-// outright, and NewWriter already selects it when stdout is not a terminal, so
-// redirecting to a file gives plain text without asking.
-var out = newOutput()
-
-func newOutput() *colorprofile.Writer {
-	w := colorprofile.NewWriter(os.Stdout, os.Environ())
-
-	// Detect documents that NO_COLOR wins over CLICOLOR_FORCE, but it does not
-	// actually apply it here, and the ASCII profile it aims for still emits
-	// bare reset sequences. Honour the convention ourselves instead: set and
-	// non-empty means no colour, whatever the value.
-	// https://no-color.org/
-	if v, ok := os.LookupEnv("NO_COLOR"); ok && v != "" {
-		w.Profile = colorprofile.NoTTY
-	}
-
-	return w
-}
-
-// plainOutput drops colour regardless of what stdout looks like.
-func plainOutput() {
-	out.Profile = colorprofile.NoTTY
-}
-
-// depStyle colours a dependency by how it resolved, matching the TUI.
-func depStyle(dep dependency, style lg.Style) lg.Style {
+// depColour is the SGR code for a dependency, by how it resolved, matching the
+// TUI's palette.
+func depColour(dep dependency) string {
 	switch {
 	case dep.found:
-		return style.Foreground(lg.Green)
+		return fgGreen
 	case dep.virtual:
-		return style.Foreground(lg.Cyan)
+		return fgCyan
 	default:
-		return style.Foreground(lg.Red)
+		return fgRed
 	}
 }
 
@@ -54,8 +26,7 @@ func printPE(filePath string, imports, exports, recursive, hideDelayed bool) {
 	}
 	defer f.Close()
 
-	style := lg.NewStyle()
-	fmt.Fprintln(out, filePath+style.Foreground(lg.BrightBlack).Render(" "+describeToolset(f)))
+	fmt.Fprintln(out, filePath+paint(fgBrightBlack, " "+describeToolset(f)))
 
 	// -r prints dependencies, so it implies -i.
 	if imports || recursive {
@@ -65,27 +36,27 @@ func printPE(filePath string, imports, exports, recursive, hideDelayed bool) {
 
 		switch {
 		case len(deps) == 0:
-			fmt.Fprintln(out, style.Foreground(lg.Green).Render("No imports"))
+			fmt.Fprintln(out, paint(fgGreen, "No imports"))
 		case recursive:
 			printTree(filePath, deps, func(path string) ([]dependency, error) {
 				return resolveDeps(path, search)
-			}, style, hideDelayed)
+			}, hideDelayed)
 		default:
 			for _, dep := range deps {
-				fmt.Fprintln(out, depStyle(dep, style).Render(dep.label()))
+				fmt.Fprintln(out, paint(depColour(dep), dep.label()))
 			}
 		}
 	}
 
 	if exports {
 		if !f.HasExport {
-			fmt.Fprintln(out, style.Foreground(lg.Green).Render("No exports"))
+			fmt.Fprintln(out, paint(fgGreen, "No exports"))
 		} else {
 			for _, fn := range f.Export.Functions {
 				if fn.Name == "" {
 					fmt.Fprintf(out, "(ordinal %d, RVA 0x%08X)\n", fn.Ordinal, fn.FunctionRVA)
 				} else {
-					fmt.Fprintln(out, style.Foreground(lg.Yellow).Render(fn.Name))
+					fmt.Fprintln(out, paint(fgYellow, fn.Name))
 				}
 			}
 		}
@@ -103,8 +74,7 @@ func printUnresolved(filePath string, hideDelayed bool) int {
 	}
 	defer f.Close()
 
-	style := lg.NewStyle()
-	fmt.Fprintln(out, filePath+style.Foreground(lg.BrightBlack).Render(" "+describeToolset(f)))
+	fmt.Fprintln(out, filePath+paint(fgBrightBlack, " "+describeToolset(f)))
 
 	search := newSearchPath(searchDirs(filePath, f.NtHeader.FileHeader.Machine))
 	missing := unresolvedDeps(filePath, depsFromFile(f, search), func(path string) ([]dependency, error) {
@@ -114,7 +84,7 @@ func printUnresolved(filePath string, hideDelayed bool) int {
 	missing = filterDelayedFindings(missing, hideDelayed)
 
 	if len(missing) == 0 {
-		fmt.Fprintln(out, style.Foreground(lg.Green).Render("No unresolved dependencies"))
+		fmt.Fprintln(out, paint(fgGreen, "No unresolved dependencies"))
 		return 0
 	}
 
@@ -144,27 +114,26 @@ func filterDelayedFindings(missing []unresolved, hide bool) []unresolved {
 // writeUnresolvedReport renders the findings and returns the exit code: 1 when
 // any of them is needed at load time.
 func writeUnresolvedReport(missing []unresolved) int {
-	style := lg.NewStyle()
-
 	width := labelWidth(missing)
 
 	exit := 0
 	for _, hit := range missing {
-		colour := lg.Yellow
+		colour := fgYellow
 		if hit.hard {
 			// Missing at load time: the image will not start.
-			colour = lg.Red
+			colour = fgRed
 			exit = 1
 		}
 
+		// The label is padded before it is painted, so the escape sequences
+		// never count towards the column width.
 		fmt.Fprintln(out,
-			style.Foreground(colour).Render(fmt.Sprintf("%-*s", width, hit.label()))+
-				style.Foreground(lg.BrightBlack).Render("  <- "+hit.importerList()))
+			paint(colour, fmt.Sprintf("%-*s", width, hit.label()))+
+				paint(fgBrightBlack, "  <- "+hit.importerList()))
 	}
 
 	fmt.Fprintln(out)
-	fmt.Fprintln(out, style.Foreground(lg.BrightBlack).Render(
-		fmt.Sprintf("%d unresolved", len(missing))))
+	fmt.Fprintln(out, paint(fgBrightBlack, fmt.Sprintf("%d unresolved", len(missing))))
 
 	return exit
 }
@@ -172,7 +141,7 @@ func writeUnresolvedReport(missing []unresolved) int {
 // printTree walks the dependency graph depth-first to full depth. Each module is
 // expanded the first time it is reached and later occurrences are marked
 // "(seen)"; the walk order is fixed, so that set is deterministic.
-func printTree(rootPath string, deps []dependency, resolve resolver, style lg.Style, hideDelayed bool) {
+func printTree(rootPath string, deps []dependency, resolve resolver, hideDelayed bool) {
 	seen := map[string]bool{strings.ToLower(rootPath): true}
 
 	var walk func(deps []dependency, prefix string)
@@ -203,8 +172,7 @@ func printTree(rootPath string, deps []dependency, resolve resolver, style lg.St
 			}
 
 			fmt.Fprintln(out,
-				style.Foreground(lg.BrightBlack).Render(prefix+branch)+
-					depStyle(dep, style).Render(label))
+				paint(fgBrightBlack, prefix+branch)+paint(depColour(dep), label))
 
 			walk(children, indent)
 		}

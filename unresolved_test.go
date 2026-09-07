@@ -4,9 +4,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-
-	tea "charm.land/bubbletea/v2"
-	"github.com/charmbracelet/colorprofile"
 )
 
 // foundDep builds a resolvable dependency; missingDep and delayedDep build the
@@ -197,7 +194,7 @@ func TestUnresolvedExitCode(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			captureOut(t, colorprofile.NoTTY)
+			captureOut(t, false)
 
 			g := newFakeGraph(nil)
 			got := unresolvedDeps("root.exe", tt.deps, g.resolve)
@@ -215,7 +212,7 @@ func TestUnresolvedExitCode(t *testing.T) {
 }
 
 func TestPrintUnresolvedReportShape(t *testing.T) {
-	buf := captureOut(t, colorprofile.NoTTY)
+	buf := captureOut(t, false)
 
 	missing := []unresolved{
 		{name: "AzureAttestManager.dll", importers: []string{"DMCmnUtils.dll"}},
@@ -259,8 +256,6 @@ func newUnresolvedModel(g *fakeGraph, deps ...dependency) model {
 	m := model{
 		mode:     importMode,
 		filePath: "root.exe",
-		width:    80,
-		height:   12,
 		resolve:  g.resolve,
 	}
 	for _, dep := range deps {
@@ -272,12 +267,8 @@ func newUnresolvedModel(g *fakeGraph, deps ...dependency) model {
 
 func pressU(t *testing.T, m model) model {
 	t.Helper()
-	next, _ := m.Update(tea.KeyPressMsg{Code: 'u', Text: "u"})
-	got, ok := next.(model)
-	if !ok {
-		t.Fatalf("Update returned %T, want model", next)
-	}
-	return got
+	m.handle(keyEvent('u'))
+	return m
 }
 
 // u is a toggle: into the findings and straight back to the import list.
@@ -329,7 +320,7 @@ func TestUKeyScansOnlyOnce(t *testing.T) {
 
 // A file that failed to load has no resolver; u must not walk with it.
 func TestUKeyOnUnloadableFile(t *testing.T) {
-	m := model{mode: importMode, width: 80, height: 12, loadErr: "failed to parse PE"}
+	m := model{mode: importMode, loadErr: "failed to parse PE"}
 
 	got := pressU(t, m)
 
@@ -339,7 +330,7 @@ func TestUKeyOnUnloadableFile(t *testing.T) {
 	if got.length() != 0 {
 		t.Errorf("length() = %d, want 0", got.length())
 	}
-	if !strings.Contains(got.View().Content, "failed to parse PE") {
+	if !strings.Contains(renderString(&got, 80, 12), "failed to parse PE") {
 		t.Error("the body should show the load failure")
 	}
 }
@@ -355,8 +346,8 @@ func TestDKeyFiltersFindings(t *testing.T) {
 		t.Fatalf("length() = %d, want both findings", m.length())
 	}
 
-	next, _ := m.Update(tea.KeyPressMsg{Code: 'd', Text: "d"})
-	hidden := next.(model)
+	hidden := m
+	hidden.handle(keyEvent('d'))
 
 	if hidden.length() != 1 || hidden.visibleMissing[0].name != "hard.dll" {
 		t.Errorf("visibleMissing = %+v, want just hard.dll", hidden.visibleMissing)
@@ -366,13 +357,13 @@ func TestDKeyFiltersFindings(t *testing.T) {
 	if len(hidden.missing) != 2 {
 		t.Errorf("missing = %+v, want the filter to leave the findings alone", hidden.missing)
 	}
-	if !strings.Contains(hidden.View().Content, "-delay") {
+	if !strings.Contains(renderString(&hidden, 120, 12), "-delay") {
 		t.Error("the header does not show the filter is on")
 	}
 
-	back, _ := hidden.Update(tea.KeyPressMsg{Code: 'd', Text: "d"})
-	if got := back.(model); got.length() != 2 {
-		t.Errorf("length() = %d after unhiding, want 2", got.length())
+	hidden.handle(keyEvent('d'))
+	if got := hidden.length(); got != 2 {
+		t.Errorf("length() = %d after unhiding, want 2", got)
 	}
 }
 
@@ -384,22 +375,18 @@ func TestUnresolvedModeRendersWithoutPanic(t *testing.T) {
 	m.filePath = `C:\app\app.exe`
 
 	for _, size := range []struct{ width, height int }{{0, 0}, {3, 3}, {20, 10}, {200, 60}} {
-		m.width, m.height = size.width, size.height
-		m.updateStart()
+		got := renderString(&m, size.width, size.height) // must not panic
 
-		view := m.View() // must not panic
-
-		if size.height >= 3 {
-			if got, want := strings.Count(view.Content, "\n"), size.height-1; got != want {
-				t.Errorf("at %dx%d: %d newlines, want %d", size.width, size.height, got, want)
+		if size.height > 0 {
+			if n, want := strings.Count(got, "\n"), size.height-1; n != want {
+				t.Errorf("at %dx%d: %d newlines, want %d", size.width, size.height, n, want)
 			}
 		}
 	}
 
 	// And with nothing to report.
 	empty := pressU(t, newUnresolvedModel(newFakeGraph(nil), foundDep("a.dll")))
-	empty.width, empty.height = 80, 12
-	if got := empty.View().Content; !strings.Contains(got, "No unresolved dependencies") {
+	if got := renderString(&empty, 80, 12); !strings.Contains(got, "No unresolved dependencies") {
 		t.Errorf("empty body:\n%s", got)
 	}
 }

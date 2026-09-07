@@ -4,10 +4,6 @@ import (
 	"os"
 	"strings"
 	"testing"
-
-	tea "charm.land/bubbletea/v2"
-	lg "charm.land/lipgloss/v2"
-	"github.com/charmbracelet/colorprofile"
 )
 
 func TestFilterDelayed(t *testing.T) {
@@ -127,7 +123,6 @@ func TestFilteredViewSharesItems(t *testing.T) {
 // leave it out of range.
 func TestSetHideDelayedKeepsCursorInRange(t *testing.T) {
 	m := newImportModel([]int{0, 0, 0})
-	m.height = 10
 	m.imports[2].delayed = true
 	m.cursor = 2
 
@@ -164,19 +159,18 @@ func TestHideDelayedSurvivesNavigation(t *testing.T) {
 	}
 	m.cursor = m.mapFrom(target, -1)
 
-	next, _ := m.right()
-	// right() hands back a fresh model by value; only the stay-put path returns
-	// the pointer receiver.
-	child, ok := next.(model)
-	if !ok {
-		t.Skipf("could not descend into a dependency: right() returned %T", next)
+	// right() replaces the model in place with one rooted at the dependency.
+	before := m.filePath
+	m.right()
+	if m.filePath == before {
+		t.Skip("could not descend into a dependency")
 	}
-	if !child.hideDelayed {
+	if !m.hideDelayed {
 		t.Fatal("descending into a dependency reset the filter")
 	}
 
-	back, _ := child.left()
-	if parent, ok := back.(model); !ok || !parent.hideDelayed {
+	m.left()
+	if !m.hideDelayed {
 		t.Error("coming back up reset the filter")
 	}
 }
@@ -184,30 +178,28 @@ func TestHideDelayedSurvivesNavigation(t *testing.T) {
 // The d key must reach the filter in both dependency views, and leave the
 // export list alone.
 func TestDKeyTogglesFilter(t *testing.T) {
-	press := tea.KeyPressMsg{Code: 'd', Text: "d"}
+	press := keyEvent('d')
 
 	for _, md := range []mode{importMode, treeMode} {
 		m := newImportModel([]int{0, 0})
 		m.mode = md
-		m.height = 10
 
-		next, _ := m.Update(press)
-		if got := next.(model); !got.hideDelayed {
+		m.handle(press)
+		if !m.hideDelayed {
 			t.Errorf("mode %d: d did not turn the filter on", md)
 		}
 	}
 
 	m := newImportModel([]int{0, 0})
 	m.mode = exportMode
-	m.height = 10
-	next, _ := m.Update(press)
-	if got := next.(model); got.hideDelayed {
+	m.handle(press)
+	if m.hideDelayed {
 		t.Error("d should do nothing in the export list")
 	}
 }
 
 // The whole path the app actually takes: a real image loaded by initModel, the
-// key delivered through Update, and the rows the view would draw.
+// key delivered through handle, and the rows the render would draw.
 func TestDKeyOnARealImage(t *testing.T) {
 	const image = `C:\Windows\System32\mstsc.exe`
 	if _, err := os.Stat(image); err != nil {
@@ -218,7 +210,6 @@ func TestDKeyOnARealImage(t *testing.T) {
 	if m.loadErr != "" {
 		t.Skipf("could not load %s: %s", image, m.loadErr)
 	}
-	m.width, m.height = 120, 40
 
 	delayed := 0
 	for _, item := range m.imports {
@@ -232,32 +223,28 @@ func TestDKeyOnARealImage(t *testing.T) {
 
 	before := m.length()
 
-	next, _ := m.Update(tea.KeyPressMsg{Code: 'd', Text: "d"})
-	hidden, ok := next.(model)
-	if !ok {
-		t.Fatalf("Update returned %T, want model", next)
-	}
+	m.handle(keyEvent('d'))
 
-	if !hidden.hideDelayed {
+	if !m.hideDelayed {
 		t.Fatal("d did not set the filter")
 	}
-	if got := hidden.length(); got != before-delayed {
+	if got := m.length(); got != before-delayed {
 		t.Errorf("length() = %d after hiding, want %d (%d - %d delayed)",
 			got, before-delayed, before, delayed)
 	}
-	for _, item := range hidden.visibleImports {
+	for _, item := range m.visibleImports {
 		if item.delayed {
 			t.Fatalf("%s survived the filter", item.name)
 		}
 	}
-	if !strings.Contains(hidden.View().Content, "-delay") {
+	if !strings.Contains(renderString(&m, 120, 40), "-delay") {
 		t.Error("the header does not show the filter is on")
 	}
 
 	// And back again.
-	back, _ := hidden.Update(tea.KeyPressMsg{Code: 'd', Text: "d"})
-	if got := back.(model); got.length() != before {
-		t.Errorf("length() = %d after unhiding, want %d", got.length(), before)
+	m.handle(keyEvent('d'))
+	if got := m.length(); got != before {
+		t.Errorf("length() = %d after unhiding, want %d", got, before)
 	}
 }
 
@@ -265,10 +252,9 @@ func TestDKeyOnARealImage(t *testing.T) {
 // understates what the image imports.
 func TestHeaderAndHelpAnnounceTheFilter(t *testing.T) {
 	m := newImportModel([]int{0, 0})
-	m.width, m.height = 120, 10
 	m.filePath = `C:\app\app.exe`
 
-	if got := m.View().Content; strings.Contains(got, "-delay") {
+	if got := renderString(&m, 120, 10); strings.Contains(got, "-delay") {
 		t.Error("the header claimed rows were hidden while showing everything")
 	} else if !strings.Contains(got, "Hide delayed") {
 		t.Error("the help line should offer to hide delayed modules")
@@ -276,7 +262,7 @@ func TestHeaderAndHelpAnnounceTheFilter(t *testing.T) {
 
 	m.setHideDelayed(true)
 
-	got := m.View().Content
+	got := renderString(&m, 120, 10)
 	if !strings.Contains(got, "-delay") {
 		t.Errorf("header does not mention the filter:\n%s", got)
 	}
@@ -288,17 +274,17 @@ func TestHeaderAndHelpAnnounceTheFilter(t *testing.T) {
 // A delay-loaded api-set used to lose its (delay) marker in the tree, where the
 // api-set case rebuilt the label from the bare name.
 func TestTreeRowKeepsBothMarkers(t *testing.T) {
-	m := model{mode: treeMode, width: 80, height: 10}
-	node := &treeNode{dep: dependency{
+	m := model{mode: treeMode}
+	m.visible = []*treeNode{{dep: dependency{
 		name:    "api-ms-win-core-x-l1-1-0.dll",
 		delayed: true,
 		virtual: true,
-	}}
+	}}}
 
-	got := m.renderTreeRow(node, false)
+	got := renderString(&m, 80, 10)
 	want := "api-ms-win-core-x-l1-1-0.dll (delay) (api-set)"
 	if !strings.Contains(got, want) {
-		t.Errorf("renderTreeRow = %q, want it to contain %q", got, want)
+		t.Errorf("the tree row is %q, want it to contain %q", got, want)
 	}
 }
 
@@ -319,7 +305,7 @@ func TestFilterDelayedFindings(t *testing.T) {
 		t.Fatalf("filtered = %+v, want just broken.dll", got)
 	}
 
-	captureOut(t, colorprofile.NoTTY)
+	captureOut(t, false)
 	if exit := writeUnresolvedReport(got); exit != 1 {
 		t.Errorf("exit = %d, want 1: a hard miss still fails the check", exit)
 	}
@@ -332,7 +318,7 @@ func TestFilterDelayedFindings(t *testing.T) {
 }
 
 func TestPrintTreeHidesDelayed(t *testing.T) {
-	buf := captureOut(t, colorprofile.NoTTY)
+	buf := captureOut(t, false)
 
 	g := newFakeGraph(map[string][]string{"a.dll": {}, "c.dll": {}})
 	g.deps["a.dll"] = []dependency{
@@ -343,7 +329,7 @@ func TestPrintTreeHidesDelayed(t *testing.T) {
 		{name: "a.dll", path: "a.dll", found: true},
 		{name: "b.dll", path: "b.dll", found: true, delayed: true},
 		{name: "c.dll", path: "c.dll", found: true},
-	}, g.resolve, lg.NewStyle(), true)
+	}, g.resolve, true)
 
 	want := strings.Join([]string{
 		"├─ a.dll",

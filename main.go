@@ -7,7 +7,8 @@ import (
 	"os"
 	"path/filepath"
 
-	tea "charm.land/bubbletea/v2"
+	"github.com/Fiend3d/catatui"
+	"github.com/Fiend3d/catatui/term"
 )
 
 var (
@@ -66,19 +67,93 @@ func main() {
 		return
 	}
 
-	// Fail before the TUI takes over the terminal: once bubbletea owns the
-	// screen, exiting without letting it restore leaves the shell in the alt
-	// screen with mouse tracking on.
+	// Fail before the TUI takes over the terminal: once the alternate screen
+	// is up, exiting without letting it be restored leaves the shell in raw
+	// mode with mouse tracking on.
 	m := initModel(filePath, []string{})
 	if m.loadErr != "" {
 		log.Fatal(m.loadErr)
 	}
 	m.setHideDelayed(*hideDelayed)
 
-	p := tea.NewProgram(m)
-
-	_, err = p.Run()
-	if err != nil {
+	if err := runTUI(&m); err != nil {
 		log.Fatalf("failed to launch the program: %s", err)
 	}
+}
+
+// modeTitle names the window for the mode on screen.
+func modeTitle(md mode) string {
+	switch md {
+	case exportMode:
+		return "Deps - Export"
+	case treeMode:
+		return "Deps - Tree"
+	case unresolvedMode:
+		return "Deps - Unresolved"
+	default:
+		return "Deps - Import"
+	}
+}
+
+// setWindowTitle names the terminal window. catatui draws cells and has no
+// opinion about the window around them, so this is written out directly.
+func setWindowTitle(title string) {
+	fmt.Fprintf(os.Stdout, "\x1b]2;%s\a", title)
+}
+
+// runTUI owns the terminal for as long as the program is on screen: set it up,
+// draw, block for an event, and repeat until the model says to stop.
+func runTUI(m *model) error {
+	// RecoverAndRestore puts the terminal back if anything below panics, so a
+	// crash leaves a usable shell and a readable stack trace.
+	defer term.RecoverAndRestore()
+
+	terminal, restore, err := term.Init(term.WithMouse())
+	if err != nil {
+		return err
+	}
+	defer restore()
+
+	events := term.NewEventReader(os.Stdin, os.Stdout)
+	defer events.Close()
+
+	title := ""
+	for !m.quit {
+		if next := modeTitle(m.mode); next != title {
+			title = next
+			setWindowTitle(title)
+		}
+
+		if err := terminal.Draw(func(f *catatui.Frame) {
+			f.RenderWidget(m, f.Area())
+		}); err != nil {
+			return err
+		}
+
+		// Block until something happens: an idle view costs nothing at all.
+		ev, ok := <-events.Events()
+		if !ok {
+			break
+		}
+		m.handle(ev)
+
+		// Drain whatever else is already queued before drawing again. A wheel
+		// spin or a held arrow key produces a burst of events, and collapsing
+		// them into one frame is what keeps the list feeling immediate.
+		for drained := true; drained; {
+			select {
+			case ev, ok := <-events.Events():
+				if !ok {
+					m.quit = true
+					drained = false
+					break
+				}
+				m.handle(ev)
+			default:
+				drained = false
+			}
+		}
+	}
+
+	return events.Err()
 }

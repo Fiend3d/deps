@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/charmbracelet/x/ansi"
+	"github.com/Fiend3d/catatui"
 	"github.com/saferwall/pe"
 	"golang.design/x/clipboard"
 )
@@ -51,8 +51,29 @@ func parseWith(filePath string, opts *pe.Options) (*pe.File, error) {
 	return f, nil
 }
 
+// truncate shortens s to at most width columns, marking the cut with an
+// ellipsis. It measures with catatui's own width function, so what it counts is
+// exactly what the buffer will draw.
 func truncate(s string, width int) string {
-	return ansi.Truncate(s, width, "…")
+	if width <= 0 {
+		return ""
+	}
+	if catatui.StringWidth(s) <= width {
+		return s
+	}
+
+	// Room has to be left for the ellipsis itself, and a wide cluster is
+	// dropped whole rather than split down the middle.
+	var b strings.Builder
+	used := 0
+	for g := range catatui.SegmentGraphemes(s) {
+		if used+int(g.Width) > width-1 {
+			break
+		}
+		b.WriteString(g.Symbol)
+		used += int(g.Width)
+	}
+	return b.String() + "…"
 }
 
 // searchDirs lists the directories to probe for a dependency, in the order the

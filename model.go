@@ -3,7 +3,8 @@ package main
 import (
 	"fmt"
 
-	tea "charm.land/bubbletea/v2"
+	"github.com/Fiend3d/catatui"
+	"github.com/Fiend3d/catatui/widgets"
 )
 
 type mode int
@@ -88,11 +89,28 @@ type model struct {
 	search  *searchPath
 	resolve resolver
 
+	// cursor is the authoritative selection. The list state carries it down
+	// into the widget at render time, but it is kept here as well because the
+	// help line and the copy actions read the selection before anything is
+	// drawn, and widgets.ListState clamps only while rendering.
 	cursor int
-	start  int
+	// cursorDetached is set while the mouse wheel moves the viewport. It lets
+	// the selected row leave the screen without making the list widget pull it
+	// back into view; keyboard navigation and row clicks reattach it.
+	cursorDetached bool
 
-	width  int
-	height int
+	// list owns the scroll offset: the offset is settled during rendering,
+	// because only then is the height inside the border known. scroll follows
+	// it so the scrollbar's thumb lands in the right place, and listArea is
+	// the row region of the last frame, which is what a mouse click is
+	// resolved against.
+	list     widgets.ListState
+	scroll   widgets.ScrollbarState
+	tabsArea catatui.Rect
+	listArea catatui.Rect
+
+	// quit ends the event loop.
+	quit bool
 
 	history []string
 
@@ -157,23 +175,22 @@ func (m *model) selectedDep() (dependency, bool) {
 	return dependency{}, false
 }
 
-// clampCursor keeps the cursor and scroll offset inside whichever list is on
-// screen. Both refreshers rebuild a list the other mode may be showing, so the
-// bound has to come from the active mode rather than the list just rebuilt.
+// clampCursor keeps the cursor inside whichever list is on screen. Both
+// refreshers rebuild a list the other mode may be showing, so the bound has to
+// come from the active mode rather than the list just rebuilt.
 func (m *model) clampCursor() {
 	m.cursor = max(0, min(m.cursor, m.length()-1))
-	m.updateStart()
 }
 
 // refreshVisible rebuilds the flattened tree after an expand or collapse and
-// keeps the cursor and scroll offset in range.
+// keeps the cursor in range.
 func (m *model) refreshVisible() {
 	m.visible = flattenTree(m.roots, m.hideDelayed)
 	m.clampCursor()
 }
 
-// refreshImports rebuilds the filtered import list and keeps the cursor and
-// scroll offset in range, the flat list's counterpart to refreshVisible.
+// refreshImports rebuilds the filtered import list and keeps the cursor in
+// range, the flat list's counterpart to refreshVisible.
 func (m *model) refreshImports() {
 	if !m.hideDelayed {
 		m.visibleImports = m.imports
@@ -263,7 +280,6 @@ func (m *model) collapseNode() {
 	for i, candidate := range m.visible {
 		if candidate == node.parent {
 			m.cursor = i
-			m.updateStart()
 			return
 		}
 	}
@@ -373,45 +389,22 @@ func initModel(filePath string, history []string) model {
 	return result
 }
 
-func (m model) Init() tea.Cmd {
-	return nil
-}
-
-// visibleRows is the number of list rows on screen; the header and the help
-// line take one each.
+// visibleRows is the number of list rows the last frame had room for.
 func (m *model) visibleRows() int {
-	return m.height - 2
+	return int(m.listArea.Height)
 }
 
-func (m *model) updateStart() {
-	visible := m.visibleRows()
-	if visible < 1 {
-		m.start = 0
-		return
-	}
-
-	if m.cursor < m.start {
-		m.start = m.cursor
-	} else if m.cursor > m.start+visible-1 {
-		m.start = m.cursor - visible + 1
-	}
-
-	// Never scroll past the end: without this the list keeps a stale offset
-	// when the window grows and renders a blank region below the last row.
-	m.start = max(0, min(m.start, m.length()-visible))
-}
-
-func (m *model) moveCursor(move int) (tea.Model, tea.Cmd) {
+func (m *model) moveCursor(move int) {
 	m.cursor += move
-	m.cursor = max(0, min(m.cursor, m.length()-1))
-	m.updateStart()
-	return m, nil
+	m.clampCursor()
 }
 
-func (m *model) right() (tea.Model, tea.Cmd) {
+// right descends into the module under the cursor, replacing the whole model
+// with one rooted at that file.
+func (m *model) right() {
 	dep, ok := m.selectedDep()
 	if !ok || !dep.found {
-		return m, nil
+		return
 	}
 
 	newModel := initModel(dep.path, m.history)
@@ -419,10 +412,9 @@ func (m *model) right() (tea.Model, tea.Cmd) {
 		// Stay put and report it rather than descending into a file we could
 		// not read.
 		m.status = newModel.loadErr
-		return m, nil
+		return
 	}
-	newModel.width = m.width
-	newModel.height = m.height
+	newModel.listArea = m.listArea
 	// Keep exploring the way the user already was.
 	newModel.mode = m.mode
 	newModel.setHideDelayed(m.hideDelayed)
@@ -431,16 +423,16 @@ func (m *model) right() (tea.Model, tea.Cmd) {
 	if newModel.mode == unresolvedMode {
 		newModel.scanUnresolved()
 	}
-	return newModel, nil
+	*m = newModel
 }
 
-func (m *model) left() (tea.Model, tea.Cmd) {
+// left goes back to the module we descended from.
+func (m *model) left() {
 	last := len(m.history) - 2
 	newModel := initModel(m.history[last], m.history[:last])
-	newModel.width = m.width
-	newModel.height = m.height
+	newModel.listArea = m.listArea
 	newModel.setHideDelayed(m.hideDelayed)
-	return newModel, nil
+	*m = newModel
 }
 
 // copy puts text on the clipboard and reports the outcome in the help line, so
@@ -453,16 +445,15 @@ func (m *model) copy(label, text string) {
 	m.status = "copied " + label
 }
 
-func (m *model) handleWheel(steps int) (tea.Model, tea.Cmd) {
+// handleWheel scrolls the viewport without changing the selected row. The
+// cursor is allowed to leave the screen, as it would in a conventional list.
+func (m *model) handleWheel(steps int) {
 	visible := m.visibleRows()
 	if visible < 1 || m.length() <= visible {
-		return m, nil
+		return
 	}
 
-	m.start += steps
-	m.start = max(0, min(m.start, m.length()-visible))
-	// Drag the cursor along so the header counter keeps naming a visible row
-	// and the next j/k continues from what the user is looking at.
-	m.cursor = max(m.start, min(m.cursor, m.start+visible-1))
-	return m, nil
+	start := max(0, min(m.list.Offset()+steps, m.length()-visible))
+	m.list.SetOffset(start)
+	m.cursorDetached = true
 }
