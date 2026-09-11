@@ -67,9 +67,9 @@ func (m *model) counter(length int) string {
 // help names its own toggle.
 func (m *model) delayedHelp() string {
 	if m.hideDelayed {
-		return " - Show delayed "
+		return "show delayed"
 	}
-	return " - Hide delayed "
+	return "hide delayed"
 }
 
 // twoColumnLine lays left out at the start of width columns and right at the
@@ -356,8 +356,9 @@ func (m *model) renderBody(area catatui.Rect, buf *catatui.Buffer, length int) {
 }
 
 // helpLine is the key list for the active mode, or the transient status message
-// when there is one.
-func (m *model) helpLine(length int) catatui.Line {
+// when there is one. Keys that do not fit in width are left off whole, from the
+// end, so the line never stops halfway through a label.
+func (m *model) helpLine(length, width int) catatui.Line {
 	if m.status != "" {
 		return catatui.NewLine(
 			catatui.NewStyledSpan(" ◆ ", statusStyle.AddModifier(catatui.ModifierBold)),
@@ -366,24 +367,37 @@ func (m *model) helpLine(length int) catatui.Line {
 	}
 
 	modeName := strings.ToUpper(tabLabels[int(m.mode)])
-	spans := []catatui.Span{catatui.NewStyledSpan(
+	badge := catatui.NewStyledSpan(
 		" "+modeName+" ",
 		catatui.NewStyle().Fg(catatui.ColorBlack).Bg(modeColor(m.mode)).AddModifier(catatui.ModifierBold),
-	)}
-	first := true
+	)
+	spans := []catatui.Span{badge}
+	used := catatui.StringWidth(badge.GetContent())
+
+	keyStyle := modeAccent(m.mode).AddModifier(catatui.ModifierBold)
+	sep, full := " ", false
 	command := func(key, label string) {
-		if first {
-			spans = append(spans, catatui.NewSpan("  "))
-			first = false
-		} else {
-			spans = append(spans, catatui.NewStyledSpan("  •  ", dimStyle))
+		if full {
+			return
 		}
-		spans = append(spans,
-			catatui.NewStyledSpan("[", dimStyle),
-			catatui.NewStyledSpan(key, modeAccent(m.mode).AddModifier(catatui.ModifierBold)),
-			catatui.NewStyledSpan("] ", dimStyle),
-			catatui.NewStyledSpan(label, labelStyle),
-		)
+		item := []catatui.Span{
+			catatui.NewStyledSpan(sep, dimStyle),
+			catatui.NewStyledSpan(key, keyStyle),
+			catatui.NewStyledSpan(" "+label, labelStyle),
+		}
+		w := 0
+		for _, s := range item {
+			w += catatui.StringWidth(s.GetContent())
+		}
+		// Once one key is left off, so is everything after it, or a shorter
+		// later key would slip in out of order.
+		if used+w > width {
+			full = true
+			return
+		}
+		spans = append(spans, item...)
+		used += w
+		sep = "  "
 	}
 
 	// Only the flat import list uses the two-level mapping; everywhere else the
@@ -392,7 +406,6 @@ func (m *model) helpLine(length int) catatui.Line {
 	if m.mode == importMode && length > 0 {
 		mappedCursor, function = m.mapIndex(m.cursor)
 	}
-	delayedLabel := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(m.delayedHelp()), "-"))
 
 	switch m.mode {
 	case treeMode:
@@ -406,49 +419,46 @@ func (m *model) helpLine(length int) catatui.Line {
 			command("Enter", "open")
 		}
 		command("u", "unresolved")
-		command("d", delayedLabel)
+		command("d", m.delayedHelp())
 
 	case unresolvedMode:
 		command("u", "imports")
 		command("r", "tree")
-		command("d", delayedLabel)
+		command("d", m.delayedHelp())
 
 	case importMode:
 		command("Tab", "exports")
 		command("r", "tree")
 		command("u", "unresolved")
 
+		// The function list hangs off its module like a tree branch, so the
+		// toggle borrows the tree's words for it.
 		if length > 0 && m.visibleImports[mappedCursor].found {
 			if function == -1 && !m.visibleImports[mappedCursor].showFunctions {
-				command("Space", "show functions")
+				command("Space", "expand")
 			} else {
-				command("Space", "hide functions")
+				command("Space", "collapse")
 			}
 		}
-		command("d", delayedLabel)
+		command("d", m.delayedHelp())
 
 	case exportMode:
 		command("Tab", "imports")
 	}
 
 	if length > 0 {
-		command("a", "copy all")
+		// The copy keys share one "copy" rather than each spelling it out.
+		sep = " │ copy "
+		command("a", "all")
+		command("c", "selected")
 
-		switch m.mode {
-		case importMode, treeMode:
-			command("c", "copy selected")
-
+		if m.mode == importMode || m.mode == treeMode {
+			// Unresolved and export rows have no file behind them, so only a
+			// resolved module offers its path and functions.
 			if dep, ok := m.selectedDep(); ok && dep.found {
-				command("p", "copy path")
-				command("f", "copy functions")
+				command("p", "path")
+				command("f", "functions")
 			}
-
-		case unresolvedMode:
-			// No path and no functions to copy: the module resolved to nothing.
-			command("c", "copy selected")
-
-		case exportMode:
-			command("c", "copy selected")
 		}
 	}
 
@@ -459,5 +469,5 @@ func (m *model) renderHelp(area catatui.Rect, buf *catatui.Buffer, length int) {
 	if area.IsEmpty() {
 		return
 	}
-	buf.SetLine(area.X, area.Y, m.helpLine(length), area.Width)
+	buf.SetLine(area.X, area.Y, m.helpLine(length, int(area.Width)), area.Width)
 }

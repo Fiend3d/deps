@@ -256,7 +256,7 @@ func TestHeaderAndHelpAnnounceTheFilter(t *testing.T) {
 
 	if got := renderString(&m, 120, 10); strings.Contains(got, "-delay") {
 		t.Error("the header claimed rows were hidden while showing everything")
-	} else if !strings.Contains(got, "Hide delayed") {
+	} else if !strings.Contains(got, "hide delayed") {
 		t.Error("the help line should offer to hide delayed modules")
 	}
 
@@ -266,7 +266,7 @@ func TestHeaderAndHelpAnnounceTheFilter(t *testing.T) {
 	if !strings.Contains(got, "-delay") {
 		t.Errorf("header does not mention the filter:\n%s", got)
 	}
-	if !strings.Contains(got, "Show delayed") {
+	if !strings.Contains(got, "show delayed") {
 		t.Errorf("help line does not offer to unhide:\n%s", got)
 	}
 }

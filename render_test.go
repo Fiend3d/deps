@@ -231,6 +231,32 @@ func TestRenderDropsDirectoryWhenNarrow(t *testing.T) {
 	}
 }
 
+// The help line leaves keys off whole when the window is too narrow for all of
+// them, rather than cutting the last one off halfway through its label.
+func TestHelpLineDropsWholeKeys(t *testing.T) {
+	m := newImportModel([]int{2, 0})
+	m.imports[0].path = `C:\dir\module.dll`
+	m.refreshImports()
+
+	full := m.helpLine(m.length(), 1000).String()
+	if !strings.Contains(full, "f functions") {
+		t.Fatalf("a wide window should fit every key, got %q", full)
+	}
+
+	for width := 20; width <= len(full); width++ {
+		got := m.helpLine(m.length(), width).String()
+		if w := catatui.StringWidth(got); w > width {
+			t.Fatalf("width %d: help line is %d columns wide", width, w)
+		}
+		if !strings.HasPrefix(full, got) {
+			t.Fatalf("width %d: %q is not a prefix of the full line", width, got)
+		}
+		if rest := full[len(got):]; rest != "" && !strings.HasPrefix(rest, "  ") && !strings.HasPrefix(rest, " │") {
+			t.Fatalf("width %d: %q stops partway through a key", width, got)
+		}
+	}
+}
+
 // truncate measures in terminal columns and marks the cut.
 func TestTruncate(t *testing.T) {
 	tests := []struct {
