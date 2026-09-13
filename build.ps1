@@ -22,4 +22,12 @@ if ($icon) {
     rsrc -ico .\assets\icon.ico
 }
 
-go build -ldflags $ldflags
+$outputPath = Join-Path $PSScriptRoot "deps.exe"
+if (Test-Path -LiteralPath $outputPath) {
+    Remove-Item -LiteralPath $outputPath -ErrorAction Stop
+}
+
+go build -a -o $outputPath -ldflags $ldflags
+if ($LASTEXITCODE -ne 0) {
+    throw "go build failed with exit code $LASTEXITCODE"
+}
