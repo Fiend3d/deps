@@ -85,13 +85,13 @@ func main() {
 func modeTitle(md mode) string {
 	switch md {
 	case exportMode:
-		return "Deps - Export"
+		return "Exports"
 	case treeMode:
-		return "Deps - Tree"
+		return "Dependency Tree"
 	case unresolvedMode:
-		return "Deps - Unresolved"
+		return "Unresolved Dependencies"
 	default:
-		return "Deps - Import"
+		return "Imports"
 	}
 }
 
@@ -119,7 +119,7 @@ func runTUI(m *model) error {
 
 	title := ""
 	for !m.quit {
-		if next := modeTitle(m.mode); next != title {
+		if next := fmt.Sprintf("Deps - %s - %s", filepath.Base(m.filePath), modeTitle(m.mode)); next != title {
 			title = next
 			setWindowTitle(title)
 		}
