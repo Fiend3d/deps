@@ -16,7 +16,7 @@ The interactive interface is built with [Catatui](https://github.com/Fiend3d/cat
 
 ## Quick start
 
-Build from source on Windows with Git and **Go 1.27.0 or newer**, as required by `go.mod`:
+Build from source on Windows with Git and **Go 1.27.3 or newer**, as required by `go.mod`:
 
 ```powershell
 git clone https://github.com/Fiend3d/deps.git

@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/Fiend3d/catatui"
 	"github.com/saferwall/pe"
@@ -132,12 +134,20 @@ func findDependency(dep string, dirs []string) (string, bool) {
 	return "", false
 }
 
+// clipboardWrite puts text on the clipboard. The write is complete when it
+// returns; the context only bounds how long a wedged clipboard backend may take
+// to answer, so a stuck copy reports a failure instead of hanging the UI.
 func clipboardWrite(text string) error {
 	err := clipboard.Init()
 	if err != nil {
 		return err
 	}
 
-	clipboard.Write(clipboard.FmtText, []byte(text))
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	if _, err := clipboard.Write(ctx, clipboard.FmtText, []byte(text)); err != nil {
+		return err
+	}
 	return nil
 }
